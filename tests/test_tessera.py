@@ -135,6 +135,11 @@ class TesseraTests(unittest.TestCase):
             Settings(environment="production", auth_enabled=True,
                      session_secret="x" * 32,
                      database_url="postgresql://db/tessera").validate()
+        with self.assertRaisesRegex(ValueError, "object storage"):
+            Settings(environment="production", auth_enabled=True,
+                     session_secret="x" * 32,
+                     database_url="postgresql://db/tessera",
+                     redis_url="redis://cache/0").validate()
 
     def test_market_twin_refuses_to_guess_without_evidence(self):
         system = CapitalOrchestrator()

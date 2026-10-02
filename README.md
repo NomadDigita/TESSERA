@@ -126,6 +126,16 @@ TESSERA_ADMIN_PASSWORD=<at-least-12-characters>
 ```
 
 `docker compose up --build` starts the API, worker, pgvector PostgreSQL, and
-persistent Redis services. Replace all example credentials before deployment.
+persistent Redis and S3-compatible object storage services. Replace all example
+credentials before deployment.
+
+Replay evidence is persisted as canonical JSON with a SHA-256 integrity reference:
+
+- `GET /api/replays` lists replay records.
+- `GET /api/replays/{replay_id}` returns artifact metadata.
+- `GET /api/replays/{replay_id}/bundle` verifies and returns the pinned evidence bundle.
+
+Each bundle contains original and replay run snapshots, strategy versions, model-call
+audit records, Constitution version, and the relevant causal-ledger entries.
 
 See [operations](docs/operations.md) and [security](docs/security.md) for deployment and incident procedures.

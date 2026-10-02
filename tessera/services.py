@@ -9,6 +9,7 @@ from .domain import CausalLedger, ExecutionFrozen, OrderIntent, Run, now, uid
 from .llm import DeterministicProvider, LLMRouter, QwenProvider
 from .intelligence import MarketGraph, MarketTwin, StrategyGenomeRegistry
 from .events import NullEventBus
+from .artifacts import create_artifact_store
 from .observability import METRICS
 from .storage import SQLiteStore
 
@@ -148,10 +149,12 @@ class RiskConstitution:
 
 
 class CapitalOrchestrator:
-    def __init__(self, store: SQLiteStore | None = None, settings: Settings | None = None, broker=None, event_bus=None) -> None:
+    def __init__(self, store: SQLiteStore | None = None, settings: Settings | None = None, broker=None,
+                 event_bus=None, artifact_store=None) -> None:
         self.settings = settings or Settings(database_path=":memory:")
         self.store = store or SQLiteStore(":memory:")
         self.event_bus = event_bus or NullEventBus()
+        self.artifact_store = artifact_store or create_artifact_store(self.settings)
         self.runs: dict[str, Run] = self.store.load_runs()
         self.ledger = CausalLedger(self.store.load_ledger(), self.store.append_ledger, self.store.load_ledger)
         if broker is not None:
@@ -292,7 +295,36 @@ class CapitalOrchestrator:
 
     def replay(self, run_id: str) -> Run:
         original = self._get_run(run_id)
-        return self.create_run(dict(original.event), replay_of=run_id)
+        replay_run = self.create_run(dict(original.event), replay_of=run_id)
+        replay_id = uid()
+        bundle = {
+            "schema": "tessera-replay-bundle-v1", "replay_id": replay_id,
+            "created_at": now(), "original_run": original.json(), "replay_run": replay_run.json(),
+            "strategy_versions": self.strategies.list(),
+            "constitution_version": self.risk.version,
+            "model_calls": self.store.list_model_calls(limit=1000),
+            "ledger_entries": [entry for entry in self.ledger.json()
+                               if entry["run_id"] in {original.run_id, replay_run.run_id}],
+        }
+        artifact = self.artifact_store.put_json(f"replays/{replay_id}.json", bundle)
+        record = {"replay_id": replay_id, "original_run_id": original.run_id,
+                  "replay_run_id": replay_run.run_id, "created_at": bundle["created_at"],
+                  "artifact": artifact, "status": "complete"}
+        self.store.save_replay(record)
+        self.ledger.append(replay_run.run_id, "replay_bundle", "replay_director", record)
+        return replay_run
+
+    def replay_bundle(self, replay_id: str) -> dict:
+        replay = self.store.get_replay(replay_id)
+        if not replay:
+            raise KeyError(replay_id)
+        bundle = self.artifact_store.get_json(replay["artifact"]["key"])
+        from .artifacts import canonical_json
+        import hashlib
+        observed = hashlib.sha256(canonical_json(bundle)).hexdigest()
+        if observed != replay["artifact"]["sha256"]:
+            raise ValueError("Replay bundle integrity check failed")
+        return bundle
 
     @property
     def kill_switch_enabled(self) -> bool:
@@ -312,7 +344,9 @@ class CapitalOrchestrator:
         return {"status": "ok", "environment": self.settings.environment, "mode": self.settings.broker_mode, "live_trading": self.settings.live_trading_enabled, "ledger_valid": self.ledger.verify(), "runs": len(self.runs), "kill_switch": self.kill_switch_enabled, "database": database, "event_bus": event_bus, "queue": self.store.queue_depth()}
 
     def readiness(self) -> tuple[bool, dict]:
-        checks = {"database": self.store.ping(), "event_bus": self.event_bus.ping(), "ledger": self.ledger.verify(), "live_trading_disabled": not self.settings.live_trading_enabled}
+        checks = {"database": self.store.ping(), "event_bus": self.event_bus.ping(),
+                  "artifact_store": self.artifact_store.ping(), "ledger": self.ledger.verify(),
+                  "live_trading_disabled": not self.settings.live_trading_enabled}
         ready = all(checks.values())
         return ready, {"status": "ready" if ready else "not_ready", "checks": checks}
 

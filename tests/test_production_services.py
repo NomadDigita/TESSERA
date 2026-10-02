@@ -7,6 +7,7 @@ from tessera.events import RedisStreamBus
 from tessera.services import CapitalOrchestrator
 from tessera.storage import PostgreSQLStore
 from tessera.worker import Worker
+from tessera.artifacts import S3ArtifactStore
 
 
 @unittest.skipUnless(os.getenv("TESSERA_INTEGRATION_TESTS") == "1", "production services not configured")
@@ -33,6 +34,17 @@ class ProductionServicesTests(unittest.TestCase):
         self.assertTrue(api.ledger.verify())
         api.close()
         worker_system.close()
+
+    def test_s3_compatible_artifact_round_trip(self):
+        store = S3ArtifactStore(os.environ["OBJECT_STORAGE_ENDPOINT"],
+                                os.environ["OBJECT_STORAGE_BUCKET"],
+                                os.environ["OBJECT_STORAGE_ACCESS_KEY"],
+                                os.environ["OBJECT_STORAGE_SECRET_KEY"])
+        store.ensure_bucket()
+        payload = {"schema": "integration", "value": uuid.uuid4().hex}
+        reference = store.put_json(f"integration/{uuid.uuid4().hex}.json", payload)
+        self.assertEqual(store.get_json(reference["key"]), payload)
+        self.assertEqual(len(reference["sha256"]), 64)
 
 
 if __name__ == "__main__":

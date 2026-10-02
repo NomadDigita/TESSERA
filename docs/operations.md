@@ -5,6 +5,8 @@
 - PostgreSQL 16 with pgvector is the authoritative state and audit store.
 - Redis 7 Streams provides worker wakeups; PostgreSQL retains durable job state.
 - API and worker use the same `DATABASE_URL` and `REDIS_URL`.
+- S3-compatible object storage retains immutable replay evidence bundles; configure
+  endpoint, bucket, access key, secret key, and region consistently on API and worker.
 - Use managed TLS endpoints (`sslmode=require`, `rediss://`) outside the private
   container network, rotate passwords, and do not use Compose example credentials.
 

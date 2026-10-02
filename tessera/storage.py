@@ -112,6 +112,14 @@ class SQLiteStore:
                 );
                 CREATE INDEX IF NOT EXISTS idx_jobs_claim
                     ON jobs(status, available_at, lease_until, created_at);
+                CREATE TABLE IF NOT EXISTS replays (
+                    replay_id TEXT PRIMARY KEY,
+                    original_run_id TEXT NOT NULL,
+                    replay_run_id TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    artifact_key TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
                 """
             )
 
@@ -372,6 +380,28 @@ class SQLiteStore:
         with self._lock:
             rows = self._db.execute("SELECT status, COUNT(*) AS count FROM jobs GROUP BY status").fetchall()
         return {row["status"]: int(row["count"]) for row in rows}
+
+    def save_replay(self, replay: dict) -> None:
+        with self._lock, self._db:
+            self._db.execute(
+                """INSERT INTO replays(replay_id,original_run_id,replay_run_id,created_at,artifact_key,payload)
+                   VALUES(?,?,?,?,?,?)""",
+                (replay["replay_id"], replay["original_run_id"], replay["replay_run_id"],
+                 replay["created_at"], replay["artifact"]["key"],
+                 json.dumps(replay, sort_keys=True, separators=(",", ":"))),
+            )
+
+    def get_replay(self, replay_id: str) -> dict | None:
+        with self._lock:
+            row = self._db.execute("SELECT payload FROM replays WHERE replay_id=?", (replay_id,)).fetchone()
+        return json.loads(row["payload"]) if row else None
+
+    def list_replays(self, limit: int = 100) -> list[dict]:
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT payload FROM replays ORDER BY created_at DESC LIMIT ?", (limit,)
+            ).fetchall()
+        return [json.loads(row["payload"]) for row in rows]
 
     def ping(self) -> bool:
         try:

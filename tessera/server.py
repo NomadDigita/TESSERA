@@ -118,6 +118,18 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith("/api/jobs/"):
             job = ORCH.store.get_job(path.rsplit("/", 1)[-1])
             return self._send(job if job else {"error": "job not found"}, 200 if job else 404)
+        if path == "/api/replays":
+            return self._send({"replays": ORCH.store.list_replays()})
+        if path.startswith("/api/replays/"):
+            pieces = path.split("/")
+            replay_id = pieces[3] if len(pieces) > 3 else ""
+            if len(pieces) > 4 and pieces[4] == "bundle":
+                try:
+                    return self._send(ORCH.replay_bundle(replay_id))
+                except KeyError:
+                    return self._send({"error": "replay not found"}, 404)
+            replay = ORCH.store.get_replay(replay_id)
+            return self._send(replay if replay else {"error": "replay not found"}, 200 if replay else 404)
         if path == "/api/runs":
             return self._send({"runs": [run.json() for run in ORCH.refresh_runs().values()]})
         if path.startswith("/api/runs/"):

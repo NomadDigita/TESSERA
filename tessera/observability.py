@@ -11,9 +11,15 @@ from time import time
 SENSITIVE = {"password", "secret", "api_key", "api_secret", "passphrase", "authorization", "token", "access_token"}
 
 
+def _is_sensitive(key: str) -> bool:
+    normalized = key.lower()
+    return normalized in SENSITIVE or any(marker in normalized for marker in
+                                           ("password", "secret", "api_key", "passphrase", "authorization", "token"))
+
+
 def _redact(value):
     if isinstance(value, dict):
-        return {key: ("[REDACTED]" if key.lower() in SENSITIVE else _redact(item)) for key, item in value.items()}
+        return {key: ("[REDACTED]" if _is_sensitive(key) else _redact(item)) for key, item in value.items()}
     if isinstance(value, list):
         return [_redact(item) for item in value]
     return value

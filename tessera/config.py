@@ -19,6 +19,12 @@ class Settings:
     database_path: str = "data/tessera.db"
     database_url: str = ""
     redis_url: str = ""
+    artifact_path: str = "data/artifacts"
+    object_storage_endpoint: str = ""
+    object_storage_bucket: str = ""
+    object_storage_access_key: str = ""
+    object_storage_secret_key: str = ""
+    object_storage_region: str = "us-east-1"
     environment: str = "development"
     broker_mode: str = "mock-paper"
     live_trading_enabled: bool = False
@@ -48,6 +54,12 @@ class Settings:
             database_path=os.getenv("TESSERA_DATABASE_PATH", "data/tessera.db"),
             database_url=os.getenv("DATABASE_URL", ""),
             redis_url=os.getenv("REDIS_URL", ""),
+            artifact_path=os.getenv("TESSERA_ARTIFACT_PATH", "data/artifacts"),
+            object_storage_endpoint=os.getenv("OBJECT_STORAGE_ENDPOINT", ""),
+            object_storage_bucket=os.getenv("OBJECT_STORAGE_BUCKET", ""),
+            object_storage_access_key=os.getenv("OBJECT_STORAGE_ACCESS_KEY", ""),
+            object_storage_secret_key=os.getenv("OBJECT_STORAGE_SECRET_KEY", ""),
+            object_storage_region=os.getenv("OBJECT_STORAGE_REGION", "us-east-1"),
             environment=os.getenv("TESSERA_ENV", "development"),
             broker_mode=os.getenv("TESSERA_BROKER_MODE", "mock-paper"),
             live_trading_enabled=_bool("TESSERA_LIVE_TRADING_ENABLED", False),
@@ -97,6 +109,11 @@ class Settings:
             raise ValueError("DATABASE_URL is required in production")
         if self.environment == "production" and not self.redis_url:
             raise ValueError("REDIS_URL is required in production")
+        if self.environment == "production" and not all((self.object_storage_endpoint,
+                                                           self.object_storage_bucket,
+                                                           self.object_storage_access_key,
+                                                           self.object_storage_secret_key)):
+            raise ValueError("S3-compatible object storage configuration is required in production")
         if self.database_url and not self.database_url.startswith(("postgresql://", "postgres://")):
             raise ValueError("DATABASE_URL must be a PostgreSQL URL")
         if self.redis_url and not self.redis_url.startswith(("redis://", "rediss://")):
@@ -109,3 +126,5 @@ class Settings:
     def prepare_runtime(self) -> None:
         if self.database_path != ":memory:":
             Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
+        if not self.object_storage_bucket:
+            Path(self.artifact_path).mkdir(parents=True, exist_ok=True)

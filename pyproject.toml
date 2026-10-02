@@ -1,11 +1,12 @@
 [project]
 name = "tessera"
-version = "0.7.0"
+version = "0.8.0"
 description = "Controlled multi-agent autonomous capital infrastructure"
 requires-python = ">=3.10"
 dependencies = [
     "psycopg[binary]>=3.2,<4",
     "redis>=5,<7",
+    "boto3>=1.35,<2",
 ]
 
 [project.scripts]
