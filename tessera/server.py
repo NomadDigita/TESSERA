@@ -3,9 +3,13 @@ from __future__ import annotations
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
+from .config import Settings
 from .services import CapitalOrchestrator
+from .storage import SQLiteStore
 
-ORCH = CapitalOrchestrator()
+SETTINGS = Settings.from_env()
+SETTINGS.prepare_runtime()
+ORCH = CapitalOrchestrator(SQLiteStore(SETTINGS.database_path), SETTINGS)
 
 HTML = r'''<!doctype html><html><head><meta charset="utf-8"><title>TESSERA</title>
 <style>body{margin:0;background:#09111f;color:#e6edf7;font:15px system-ui}main{max-width:1180px;margin:auto;padding:28px}.top{display:flex;justify-content:space-between;align-items:center}.mark{color:#74e1c1;font-size:28px;font-weight:800;letter-spacing:4px}.muted{color:#8fa3bd}.grid{display:grid;grid-template-columns:1.2fr .8fr;gap:18px;margin-top:22px}.card{background:#111e32;border:1px solid #263a55;border-radius:14px;padding:18px}.metric{font-size:30px;font-weight:700;margin:4px 0 12px}.pill{display:inline-block;padding:5px 9px;border-radius:20px;background:#183d45;color:#74e1c1;font-size:12px}.row{display:flex;justify-content:space-between;padding:12px 0;border-bottom:1px solid #21314a}.btn{background:#74e1c1;color:#06131b;border:0;border-radius:8px;padding:10px 14px;font-weight:700;cursor:pointer}.btn.alt{background:#263a55;color:#e6edf7}.bar{height:8px;background:#253b55;border-radius:6px;overflow:hidden}.fill{height:100%;background:#74e1c1}.small{font-size:12px}.mono{font-family:ui-monospace,monospace}.danger{color:#ff9e9e}pre{white-space:pre-wrap;max-height:270px;overflow:auto;color:#b9c9dc}</style></head>
@@ -64,6 +68,8 @@ class Handler(BaseHTTPRequestHandler):
         return
 
 
-def serve(host="127.0.0.1", port=8787):
-    print(f"TESSERA running at http://{host}:{port} (mock paper mode)")
+def serve(host: str | None = None, port: int | None = None):
+    host = host or SETTINGS.host
+    port = port or SETTINGS.port
+    print(f"TESSERA running at http://{host}:{port} ({SETTINGS.broker_mode} mode)")
     ThreadingHTTPServer((host, port), Handler).serve_forever()

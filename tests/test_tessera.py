@@ -1,6 +1,9 @@
 import unittest
+import tempfile
+from pathlib import Path
 from tessera.domain import CausalLedger
 from tessera.services import CapitalOrchestrator, RiskConstitution
+from tessera.storage import SQLiteStore
 
 
 class TesseraTests(unittest.TestCase):
@@ -32,6 +35,24 @@ class TesseraTests(unittest.TestCase):
         self.assertNotEqual(original.run_id, replay.run_id)
         self.assertEqual(original.event, replay.event)
         self.assertEqual(replay.replay_of, original.run_id)
+
+    def test_state_survives_restart(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = str(Path(directory) / "tessera.db")
+            first = CapitalOrchestrator(SQLiteStore(path))
+            run = first.create_run({"title": "Persistent event", "severity": 0.8})
+            first.approve(run.run_id)
+            second = CapitalOrchestrator(SQLiteStore(path))
+            self.assertEqual(second.runs[run.run_id].status, "EXECUTED")
+            self.assertEqual(second.broker.positions["NVDA"]["quantity"], 5.0)
+            self.assertTrue(second.ledger.verify())
+            first.close()
+            second.close()
+
+    def test_invalid_live_trading_configuration_is_rejected(self):
+        from tessera.config import Settings
+        with self.assertRaises(ValueError):
+            Settings(live_trading_enabled=True).validate()
 
 
 if __name__ == "__main__":

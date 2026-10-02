@@ -1,13 +1,21 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from .config import Settings
 from .domain import CausalLedger, OrderIntent, Run, now, uid
+from .storage import SQLiteStore
 
 
 class MockPaperBroker:
-    def __init__(self) -> None:
-        self.cash = 10000.0
-        self.positions: dict[str, dict] = {}
+    def __init__(self, store: SQLiteStore | None = None) -> None:
+        self.store = store
+        state = store.get_state("paper_portfolio", {"cash": 10000.0, "positions": {}}) if store else {"cash": 10000.0, "positions": {}}
+        self.cash = float(state["cash"])
+        self.positions: dict[str, dict] = state["positions"]
+
+    def _persist(self) -> None:
+        if self.store:
+            self.store.set_state("paper_portfolio", {"cash": self.cash, "positions": self.positions})
 
     def snapshot(self) -> dict:
         return {"cash": round(self.cash, 2), "positions": list(self.positions.values()), "mode": "mock-paper"}
@@ -20,6 +28,7 @@ class MockPaperBroker:
         current["quantity"] = round(current["quantity"] + (order.quantity if order.side == "BUY" else -order.quantity), 6)
         current["avg_price"] = order.reference_price
         self.positions[order.symbol] = current
+        self._persist()
         return {"order_id": uid(), "symbol": order.symbol, "side": order.side, "quantity": order.quantity, "fill_price": order.reference_price, "status": "FILLED", "notional": round(notional, 2), "filled_at": now()}
 
     def cancel(self, symbol: str) -> dict:
@@ -30,11 +39,16 @@ class MockPaperBroker:
         order = OrderIntent(symbol, side, abs(position["quantity"]), position["avg_price"], "Risk Constitution liquidation")
         receipt = self.place(order)
         self.positions[symbol]["quantity"] = 0.0
+        self._persist()
         return {"status": "LIQUIDATED", "symbol": symbol, "receipt": receipt}
 
 
 class RiskConstitution:
     version = "constitution-v1"
+
+    def __init__(self, max_order_notional: float = 1500.0, require_human_approval: bool = True) -> None:
+        self.max_order_notional = max_order_notional
+        self.require_human_approval = require_human_approval
 
     def evaluate(self, proposal: dict, portfolio: dict, event: dict) -> dict:
         violations = []
@@ -43,14 +57,14 @@ class RiskConstitution:
             violations.append({"rule": "NO_ORDER", "observed": 0, "limit": 1, "severity": "hard"})
         for item in orders:
             notional = item["quantity"] * item["reference_price"]
-            if notional > 1500:
-                violations.append({"rule": "MAX_ORDER_NOTIONAL", "observed": round(notional, 2), "limit": 1500, "severity": "hard"})
+            if notional > self.max_order_notional:
+                violations.append({"rule": "MAX_ORDER_NOTIONAL", "observed": round(notional, 2), "limit": self.max_order_notional, "severity": "hard"})
             if item["symbol"] not in {"NVDA", "QQQ", "TSLA", "AAPL"}:
                 violations.append({"rule": "ASSET_NOT_ALLOWED", "observed": item["symbol"], "limit": "NVDA/QQQ/TSLA/AAPL", "severity": "hard"})
         if float(event.get("severity", 0.5)) > 0.95:
             violations.append({"rule": "EXTREME_EVENT_REQUIRES_APPROVAL", "observed": event.get("severity"), "limit": 0.95, "severity": "soft"})
         hard = any(x["severity"] == "hard" for x in violations)
-        decision = "deny" if hard else "require_approval"
+        decision = "deny" if hard else ("require_approval" if self.require_human_approval else "allow")
         return {"decision": decision, "violations": violations, "approved_orders": [] if hard else orders, "constitution_version": self.version}
 
 
@@ -73,11 +87,13 @@ class AgentRuntime:
 
 
 class CapitalOrchestrator:
-    def __init__(self) -> None:
-        self.runs: dict[str, Run] = {}
-        self.ledger = CausalLedger()
-        self.broker = MockPaperBroker()
-        self.risk = RiskConstitution()
+    def __init__(self, store: SQLiteStore | None = None, settings: Settings | None = None) -> None:
+        self.settings = settings or Settings(database_path=":memory:")
+        self.store = store or SQLiteStore(":memory:")
+        self.runs: dict[str, Run] = self.store.load_runs()
+        self.ledger = CausalLedger(self.store.load_ledger(), self.store.append_ledger)
+        self.broker = MockPaperBroker(self.store)
+        self.risk = RiskConstitution(self.settings.max_order_notional, self.settings.require_human_approval)
         self.agents = AgentRuntime()
 
     def create_run(self, event: dict, replay_of: str | None = None) -> Run:
@@ -96,7 +112,8 @@ class CapitalOrchestrator:
         self.ledger.append(run_id, "vote", "capital_parliament", parliament)
         run.risk = self.risk.evaluate(parliament, self.broker.snapshot(), event)
         self.ledger.append(run_id, "risk_check", "risk_constitution", run.risk)
-        run.status = "AWAITING_APPROVAL" if run.risk["decision"] == "require_approval" else "REJECTED"
+        run.status = {"require_approval": "AWAITING_APPROVAL", "allow": "APPROVED", "deny": "REJECTED"}[run.risk["decision"]]
+        self.store.save_run(run)
         return run
 
     def approve(self, run_id: str) -> Run:
@@ -111,12 +128,14 @@ class CapitalOrchestrator:
         self.ledger.append(run_id, "fill", "execution_engine", receipt)
         run.autopsy = {"thesis": "Event-driven repricing gap", "expected": "Positive NVDA repricing", "realized": "Paper fill completed", "risk_controls": "Notional cap applied", "lesson": "Monitor spread before scaling"}
         self.ledger.append(run_id, "outcome", "portfolio_autopsy", run.autopsy)
+        self.store.save_run(run)
         return run
 
     def reject(self, run_id: str) -> Run:
         run = self.runs[run_id]
         run.status = "REJECTED"
         self.ledger.append(run_id, "approval", "operator", {"approved": False})
+        self.store.save_run(run)
         return run
 
     def replay(self, run_id: str) -> Run:
@@ -124,4 +143,7 @@ class CapitalOrchestrator:
         return self.create_run(dict(original.event), replay_of=run_id)
 
     def health(self) -> dict:
-        return {"status": "ok", "mode": "mock-paper", "live_trading": False, "ledger_valid": self.ledger.verify(), "runs": len(self.runs), "kill_switch": False}
+        return {"status": "ok", "environment": self.settings.environment, "mode": self.settings.broker_mode, "live_trading": self.settings.live_trading_enabled, "ledger_valid": self.ledger.verify(), "runs": len(self.runs), "kill_switch": False, "database": "sqlite"}
+
+    def close(self) -> None:
+        self.store.close()

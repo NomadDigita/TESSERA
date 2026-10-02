@@ -39,8 +39,9 @@ class LedgerEntry:
 
 
 class CausalLedger:
-    def __init__(self) -> None:
-        self.entries: list[LedgerEntry] = []
+    def __init__(self, entries: list[LedgerEntry] | None = None, append_hook=None) -> None:
+        self.entries: list[LedgerEntry] = entries or []
+        self._append_hook = append_hook
 
     def append(self, run_id: str, entry_type: str, actor: str, payload: dict) -> LedgerEntry:
         previous = self.entries[-1].entry_hash if self.entries else "GENESIS"
@@ -50,6 +51,8 @@ class CausalLedger:
         entry_hash = hashlib.sha256(material.encode()).hexdigest()
         entry = LedgerEntry(uid(), run_id, entry_type, actor, payload, now(), payload_hash, previous, entry_hash)
         self.entries.append(entry)
+        if self._append_hook:
+            self._append_hook(entry)
         return entry
 
     def verify(self) -> bool:
