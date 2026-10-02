@@ -1,5 +1,15 @@
 # TESSERA Operations Runbook
 
+## Required production services
+
+- PostgreSQL 16 with pgvector is the authoritative state and audit store.
+- Redis 7 Streams provides worker wakeups; PostgreSQL retains durable job state.
+- API and worker use the same `DATABASE_URL` and `REDIS_URL`.
+- Use managed TLS endpoints (`sslmode=require`, `rediss://`) outside the private
+  container network, rotate passwords, and do not use Compose example credentials.
+
+Production startup fails closed when authentication, PostgreSQL, or Redis is absent.
+
 ## Runtime modes
 
 - `mock-paper`: deterministic local and staging execution. No external orders.
@@ -9,7 +19,7 @@
 ## Health endpoints
 
 - `/api/health`: process liveness and public safety mode.
-- `/api/ready`: database, ledger, and live-trading safety readiness. Returns 503 on failure.
+- `/api/ready`: database, event bus, ledger, and live-trading safety readiness. Returns 503 on failure.
 - `/metrics`: Prometheus-compatible process metrics without portfolio or credential data.
 
 ## Startup
@@ -25,7 +35,7 @@
 
 1. Activate **Freeze execution** in the console. This persists across restarts.
 2. Do not request automatic Bitget liquidation until connected-symbol quantity semantics are validated.
-3. Preserve the SQLite volume and application logs.
+3. Preserve PostgreSQL, Redis persistence, and application logs. SQLite is only the local fallback.
 4. Inspect the Causal Ledger, request IDs, model-call audit, and exchange order status.
 5. Resume only after the root cause is documented and risk limits are reviewed.
 

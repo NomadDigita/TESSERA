@@ -109,4 +109,23 @@ Durable worker mode:
 Jobs use atomic leases, bounded retries, idempotent run creation, and a database-
 serialized causal ledger. Docker Compose starts both API and worker processes.
 
+## Production data plane
+
+Production mode requires PostgreSQL with pgvector and Redis. PostgreSQL is the
+system of record and serializes ledger writes with an advisory transaction lock.
+Redis Streams wakes workers through a consumer group; durable job state, leases,
+and retries remain in PostgreSQL so Redis message loss cannot lose a decision run.
+
+```dotenv
+TESSERA_ENV=production
+DATABASE_URL=postgresql://tessera:strong-password@postgres:5432/tessera
+REDIS_URL=redis://redis:6379/0
+TESSERA_AUTH_ENABLED=true
+TESSERA_SESSION_SECRET=<at-least-32-random-characters>
+TESSERA_ADMIN_PASSWORD=<at-least-12-characters>
+```
+
+`docker compose up --build` starts the API, worker, pgvector PostgreSQL, and
+persistent Redis services. Replace all example credentials before deployment.
+
 See [operations](docs/operations.md) and [security](docs/security.md) for deployment and incident procedures.

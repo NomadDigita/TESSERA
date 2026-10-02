@@ -17,6 +17,8 @@ class Settings:
     host: str = "127.0.0.1"
     port: int = 8787
     database_path: str = "data/tessera.db"
+    database_url: str = ""
+    redis_url: str = ""
     environment: str = "development"
     broker_mode: str = "mock-paper"
     live_trading_enabled: bool = False
@@ -44,6 +46,8 @@ class Settings:
             host=os.getenv("TESSERA_HOST", "127.0.0.1"),
             port=int(os.getenv("TESSERA_PORT", "8787")),
             database_path=os.getenv("TESSERA_DATABASE_PATH", "data/tessera.db"),
+            database_url=os.getenv("DATABASE_URL", ""),
+            redis_url=os.getenv("REDIS_URL", ""),
             environment=os.getenv("TESSERA_ENV", "development"),
             broker_mode=os.getenv("TESSERA_BROKER_MODE", "mock-paper"),
             live_trading_enabled=_bool("TESSERA_LIVE_TRADING_ENABLED", False),
@@ -89,6 +93,14 @@ class Settings:
             raise ValueError("DASHSCOPE_API_KEY is required when TESSERA_LLM_PROVIDER=qwen")
         if self.environment == "production" and not self.auth_enabled:
             raise ValueError("Authentication must be enabled in production")
+        if self.environment == "production" and not self.database_url:
+            raise ValueError("DATABASE_URL is required in production")
+        if self.environment == "production" and not self.redis_url:
+            raise ValueError("REDIS_URL is required in production")
+        if self.database_url and not self.database_url.startswith(("postgresql://", "postgres://")):
+            raise ValueError("DATABASE_URL must be a PostgreSQL URL")
+        if self.redis_url and not self.redis_url.startswith(("redis://", "rediss://")):
+            raise ValueError("REDIS_URL must be a Redis URL")
         if self.auth_enabled and len(self.session_secret) < 32:
             raise ValueError("TESSERA_SESSION_SECRET must contain at least 32 characters")
         if self.session_ttl_seconds < 300 or self.session_ttl_seconds > 86400:

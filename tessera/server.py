@@ -11,14 +11,16 @@ from .auth import AuthError, AuthManager
 from .config import Settings
 from .domain import DomainError
 from .services import CapitalOrchestrator
-from .storage import SQLiteStore
+from .storage import create_store
+from .events import create_event_bus
 from .observability import LOGGER, METRICS
 
 
 SETTINGS = Settings.from_env()
 SETTINGS.prepare_runtime()
-STORE = SQLiteStore(SETTINGS.database_path)
-ORCH = CapitalOrchestrator(STORE, SETTINGS)
+STORE = create_store(SETTINGS.database_url, SETTINGS.database_path)
+EVENT_BUS = create_event_bus(SETTINGS.redis_url, "api")
+ORCH = CapitalOrchestrator(STORE, SETTINGS, event_bus=EVENT_BUS)
 AUTH = AuthManager(STORE, SETTINGS.session_secret, SETTINGS.session_ttl_seconds) if SETTINGS.auth_enabled else None
 if AUTH and STORE.count_users() == 0:
     if not SETTINGS.admin_password:

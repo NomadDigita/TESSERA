@@ -126,6 +126,16 @@ class TesseraTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             Settings(auth_enabled=True, session_secret="too-short").validate()
 
+    def test_production_requires_postgres_and_redis(self):
+        from tessera.config import Settings
+        with self.assertRaisesRegex(ValueError, "DATABASE_URL"):
+            Settings(environment="production", auth_enabled=True,
+                     session_secret="x" * 32).validate()
+        with self.assertRaisesRegex(ValueError, "REDIS_URL"):
+            Settings(environment="production", auth_enabled=True,
+                     session_secret="x" * 32,
+                     database_url="postgresql://db/tessera").validate()
+
     def test_market_twin_refuses_to_guess_without_evidence(self):
         system = CapitalOrchestrator()
         result = system.market_twin.estimate("NVDA")

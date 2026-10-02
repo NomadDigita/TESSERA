@@ -242,7 +242,7 @@ class SQLiteStore:
 
     def count_users(self) -> int:
         with self._lock:
-            return int(self._db.execute("SELECT COUNT(*) FROM users").fetchone()[0])
+            return int(self._db.execute("SELECT COUNT(*) AS count FROM users").fetchone()["count"])
 
     def save_market_observation(self, observation: dict) -> None:
         with self._lock, self._db:
@@ -376,9 +376,99 @@ class SQLiteStore:
     def ping(self) -> bool:
         try:
             with self._lock:
-                return self._db.execute("SELECT 1").fetchone()[0] == 1
+                return self._db.execute("SELECT 1 AS ok").fetchone()["ok"] == 1
         except sqlite3.Error:
             return False
 
     def close(self) -> None:
         self._db.close()
+
+
+class _PostgresConnection:
+    """Small compatibility boundary keeping storage semantics identical across engines."""
+
+    def __init__(self, database_url: str) -> None:
+        try:
+            import psycopg
+            from psycopg.rows import dict_row
+        except ImportError as exc:
+            raise RuntimeError("PostgreSQL requires the 'postgres' TESSERA dependency") from exc
+        self._connection = psycopg.connect(database_url, row_factory=dict_row, autocommit=True)
+
+    @staticmethod
+    def _sql(statement: str) -> str:
+        statement = statement.replace("?", "%s")
+        statement = statement.replace("INSERT OR IGNORE INTO", "INSERT INTO")
+        if "INSERT INTO idempotency_keys" in statement and "ON CONFLICT" not in statement:
+            statement += " ON CONFLICT(scope,key) DO NOTHING"
+        return statement
+
+    def execute(self, statement: str, parameters=()):
+        if statement.strip().upper() == "BEGIN IMMEDIATE":
+            self._connection.execute("BEGIN")
+            self._connection.execute("SELECT pg_advisory_xact_lock(1413829465)")
+            return self._connection.execute("SELECT 1 AS ok")
+        if "SELECT * FROM jobs" in statement and "ORDER BY created_at LIMIT 1" in statement:
+            statement += " FOR UPDATE SKIP LOCKED"
+        return self._connection.execute(self._sql(statement), parameters)
+
+    def executescript(self, script: str) -> None:
+        script = script.replace("PRAGMA journal_mode=WAL;", "").replace("PRAGMA foreign_keys=ON;", "")
+        script = script.replace("INTEGER PRIMARY KEY AUTOINCREMENT", "BIGSERIAL PRIMARY KEY")
+        for statement in script.split(";"):
+            if statement.strip():
+                self.execute(statement)
+
+    def commit(self) -> None:
+        self._connection.commit()
+
+    def rollback(self) -> None:
+        self._connection.rollback()
+
+    def close(self) -> None:
+        self._connection.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, _exc, _tb):
+        self.rollback() if exc_type else self.commit()
+
+
+class PostgreSQLStore(SQLiteStore):
+    """Production store with the same transactional contract as SQLiteStore."""
+
+    def __init__(self, database_url: str) -> None:
+        self.path = database_url
+        self._lock = RLock()
+        self._db = _PostgresConnection(database_url)
+        self._migrate()
+
+    def _migrate(self) -> None:
+        self._db.execute("CREATE EXTENSION IF NOT EXISTS vector")
+        super()._migrate()
+        self._db.execute(
+            """CREATE TABLE IF NOT EXISTS asset_embeddings (
+                embedding_id TEXT PRIMARY KEY,
+                asset TEXT NOT NULL,
+                content_hash TEXT NOT NULL,
+                embedding vector(1536) NOT NULL,
+                metadata TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )"""
+        )
+
+    def ping(self) -> bool:
+        try:
+            with self._lock:
+                return self._db.execute("SELECT 1 AS ok").fetchone()["ok"] == 1
+        except Exception:
+            return False
+
+
+def create_store(database_url: str, sqlite_path: str):
+    if database_url:
+        if not database_url.startswith(("postgresql://", "postgres://")):
+            raise ValueError("DATABASE_URL must be a PostgreSQL URL")
+        return PostgreSQLStore(database_url)
+    return SQLiteStore(sqlite_path)

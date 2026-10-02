@@ -10,9 +10,13 @@ services:
         required: false
     environment:
       TESSERA_HOST: 0.0.0.0
-      TESSERA_DATABASE_PATH: /var/lib/tessera/tessera.db
-    volumes:
-      - tessera-data:/var/lib/tessera
+      DATABASE_URL: postgresql://tessera:tessera@postgres:5432/tessera
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     read_only: true
     tmpfs:
       - /tmp:size=64m,noexec,nosuid
@@ -29,9 +33,13 @@ services:
       - path: .env
         required: false
     environment:
-      TESSERA_DATABASE_PATH: /var/lib/tessera/tessera.db
-    volumes:
-      - tessera-data:/var/lib/tessera
+      DATABASE_URL: postgresql://tessera:tessera@postgres:5432/tessera
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     read_only: true
     tmpfs:
       - /tmp:size=64m,noexec,nosuid
@@ -39,6 +47,32 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: tessera
+      POSTGRES_USER: tessera
+      POSTGRES_PASSWORD: tessera
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tessera -d tessera"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
 volumes:
-  tessera-data:
+  postgres-data:
+  redis-data:

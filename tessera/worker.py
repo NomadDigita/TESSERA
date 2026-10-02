@@ -8,7 +8,8 @@ import time
 from .config import Settings
 from .observability import LOGGER, METRICS
 from .services import CapitalOrchestrator
-from .storage import SQLiteStore
+from .storage import create_store
+from .events import create_event_bus
 
 
 class Worker:
@@ -16,6 +17,7 @@ class Worker:
         self.orchestrator = orchestrator
         self.store = orchestrator.store
         self.worker_id = worker_id or f"{socket.gethostname()}-{os.getpid()}"
+        self.event_bus = orchestrator.event_bus
         self.running = True
 
     def stop(self, *_args) -> None:
@@ -44,16 +46,21 @@ class Worker:
     def run(self, poll_seconds: float = 1.0) -> None:
         LOGGER.info("worker_start", extra={"context": {"worker_id": self.worker_id}})
         while self.running:
-            if not self.process_one():
-                time.sleep(poll_seconds)
+            message_id = self.event_bus.wait("tessera:jobs", poll_seconds)
+            processed = self.process_one()
+            if message_id:
+                self.event_bus.acknowledge("tessera:jobs", message_id)
         LOGGER.info("worker_stop", extra={"context": {"worker_id": self.worker_id}})
 
 
 def main() -> None:
     settings = Settings.from_env()
     settings.prepare_runtime()
-    orchestrator = CapitalOrchestrator(SQLiteStore(settings.database_path), settings)
-    worker = Worker(orchestrator)
+    worker_id = f"{socket.gethostname()}-{os.getpid()}"
+    store = create_store(settings.database_url, settings.database_path)
+    event_bus = create_event_bus(settings.redis_url, worker_id)
+    orchestrator = CapitalOrchestrator(store, settings, event_bus=event_bus)
+    worker = Worker(orchestrator, worker_id)
     signal.signal(signal.SIGTERM, worker.stop)
     signal.signal(signal.SIGINT, worker.stop)
     try:

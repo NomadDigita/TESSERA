@@ -8,6 +8,7 @@ from .config import Settings
 from .domain import CausalLedger, ExecutionFrozen, OrderIntent, Run, now, uid
 from .llm import DeterministicProvider, LLMRouter, QwenProvider
 from .intelligence import MarketGraph, MarketTwin, StrategyGenomeRegistry
+from .events import NullEventBus
 from .observability import METRICS
 from .storage import SQLiteStore
 
@@ -147,9 +148,10 @@ class RiskConstitution:
 
 
 class CapitalOrchestrator:
-    def __init__(self, store: SQLiteStore | None = None, settings: Settings | None = None, broker=None) -> None:
+    def __init__(self, store: SQLiteStore | None = None, settings: Settings | None = None, broker=None, event_bus=None) -> None:
         self.settings = settings or Settings(database_path=":memory:")
         self.store = store or SQLiteStore(":memory:")
+        self.event_bus = event_bus or NullEventBus()
         self.runs: dict[str, Run] = self.store.load_runs()
         self.ledger = CausalLedger(self.store.load_ledger(), self.store.append_ledger, self.store.load_ledger)
         if broker is not None:
@@ -233,6 +235,7 @@ class CapitalOrchestrator:
         job = {"job_id": job_id, "job_type": "create_run", "payload": event,
                "available_at": timestamp, "created_at": timestamp}
         self.store.enqueue_job(job)
+        self.event_bus.publish("tessera:jobs", {"job_id": job_id, "job_type": "create_run"})
         self.ledger.append("SYSTEM", "job_queued", "capital_orchestrator", {"job_id": job_id, "job_type": "create_run"})
         return self.store.get_job(job_id)
 
@@ -304,12 +307,15 @@ class CapitalOrchestrator:
             return state
 
     def health(self) -> dict:
-        return {"status": "ok", "environment": self.settings.environment, "mode": self.settings.broker_mode, "live_trading": self.settings.live_trading_enabled, "ledger_valid": self.ledger.verify(), "runs": len(self.runs), "kill_switch": self.kill_switch_enabled, "database": "sqlite", "queue": self.store.queue_depth()}
+        database = "postgresql" if self.settings.database_url else "sqlite"
+        event_bus = "redis-streams" if self.settings.redis_url else "local-polling"
+        return {"status": "ok", "environment": self.settings.environment, "mode": self.settings.broker_mode, "live_trading": self.settings.live_trading_enabled, "ledger_valid": self.ledger.verify(), "runs": len(self.runs), "kill_switch": self.kill_switch_enabled, "database": database, "event_bus": event_bus, "queue": self.store.queue_depth()}
 
     def readiness(self) -> tuple[bool, dict]:
-        checks = {"database": self.store.ping(), "ledger": self.ledger.verify(), "live_trading_disabled": not self.settings.live_trading_enabled}
+        checks = {"database": self.store.ping(), "event_bus": self.event_bus.ping(), "ledger": self.ledger.verify(), "live_trading_disabled": not self.settings.live_trading_enabled}
         ready = all(checks.values())
         return ready, {"status": "ready" if ready else "not_ready", "checks": checks}
 
     def close(self) -> None:
+        self.event_bus.close()
         self.store.close()
