@@ -7,6 +7,18 @@ import json
 import uuid
 
 
+class DomainError(Exception):
+    pass
+
+
+class InvalidTransition(DomainError):
+    pass
+
+
+class ExecutionFrozen(DomainError):
+    pass
+
+
 def now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -86,3 +98,16 @@ class Run:
 
     def json(self) -> dict:
         return asdict(self)
+
+    def transition(self, target: str) -> None:
+        allowed = {
+            "RUNNING": {"AWAITING_APPROVAL", "APPROVED", "REJECTED", "CANCELLED", "FAILED"},
+            "AWAITING_APPROVAL": {"EXECUTING", "REJECTED", "CANCELLED"},
+            "APPROVED": {"EXECUTING", "CANCELLED"},
+            "EXECUTING": {"EXECUTED", "FAILED"},
+            "EXECUTED": {"LIQUIDATED"},
+            "REJECTED": set(), "CANCELLED": set(), "FAILED": set(), "LIQUIDATED": set(),
+        }
+        if target not in allowed.get(self.status, set()):
+            raise InvalidTransition(f"Cannot transition run from {self.status} to {target}")
+        self.status = target

@@ -54,6 +54,43 @@ class TesseraTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             Settings(live_trading_enabled=True).validate()
 
+    def test_create_run_is_idempotent(self):
+        system = CapitalOrchestrator()
+        first = system.create_run({"title": "One event"}, idempotency_key="request-1")
+        second = system.create_run({"title": "Different payload"}, idempotency_key="request-1")
+        self.assertEqual(first.run_id, second.run_id)
+        self.assertEqual(len(system.runs), 1)
+
+    def test_approval_is_idempotent(self):
+        system = CapitalOrchestrator()
+        run = system.create_run({"title": "Approve once"})
+        first = system.approve(run.run_id)
+        second = system.approve(run.run_id)
+        self.assertEqual(first.order["order_id"], second.order["order_id"])
+        self.assertEqual(system.broker.positions["NVDA"]["quantity"], 5.0)
+
+    def test_kill_switch_blocks_execution_and_persists(self):
+        from tessera.domain import ExecutionFrozen
+        with tempfile.TemporaryDirectory() as directory:
+            path = str(Path(directory) / "kill.db")
+            first = CapitalOrchestrator(SQLiteStore(path))
+            run = first.create_run({"title": "Frozen"})
+            first.set_kill_switch(True)
+            with self.assertRaises(ExecutionFrozen):
+                first.approve(run.run_id)
+            first.close()
+            second = CapitalOrchestrator(SQLiteStore(path))
+            self.assertTrue(second.kill_switch_enabled)
+            second.close()
+
+    def test_kill_switch_can_liquidate_positions(self):
+        system = CapitalOrchestrator()
+        run = system.create_run({"title": "Liquidate"})
+        system.approve(run.run_id)
+        state = system.set_kill_switch(True, liquidate=True)
+        self.assertEqual(system.broker.positions["NVDA"]["quantity"], 0.0)
+        self.assertEqual(state["liquidations"][0]["status"], "LIQUIDATED")
+
 
 if __name__ == "__main__":
     unittest.main()

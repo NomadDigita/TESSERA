@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import asdict
 import json
 import sqlite3
 from threading import RLock
-from typing import Iterable
 
 from .domain import LedgerEntry, Run
 
@@ -48,6 +46,13 @@ class SQLiteStore:
                 CREATE TABLE IF NOT EXISTS system_state (
                     key TEXT PRIMARY KEY,
                     value TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS idempotency_keys (
+                    scope TEXT NOT NULL,
+                    key TEXT NOT NULL,
+                    resource_id TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY(scope, key)
                 );
                 """
             )
@@ -115,6 +120,20 @@ class SQLiteStore:
         with self._lock:
             row = self._db.execute("SELECT value FROM system_state WHERE key=?", (key,)).fetchone()
         return json.loads(row["value"]) if row else default
+
+    def get_idempotent_resource(self, scope: str, key: str) -> str | None:
+        with self._lock:
+            row = self._db.execute(
+                "SELECT resource_id FROM idempotency_keys WHERE scope=? AND key=?", (scope, key)
+            ).fetchone()
+        return row["resource_id"] if row else None
+
+    def save_idempotency_key(self, scope: str, key: str, resource_id: str) -> None:
+        with self._lock, self._db:
+            self._db.execute(
+                "INSERT OR IGNORE INTO idempotency_keys(scope,key,resource_id) VALUES(?,?,?)",
+                (scope, key, resource_id),
+            )
 
     def close(self) -> None:
         self._db.close()

@@ -4,6 +4,7 @@ import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 from .config import Settings
+from .domain import DomainError
 from .services import CapitalOrchestrator
 from .storage import SQLiteStore
 
@@ -52,15 +53,18 @@ class Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         try:
             data = self._body()
-            if path == "/api/runs": return self._send(ORCH.create_run(data).json(), 201)
+            if path == "/api/runs": return self._send(ORCH.create_run(data, idempotency_key=self.headers.get("Idempotency-Key")).json(), 201)
             if path == "/api/replay": return self._send(ORCH.replay(data["run_id"]).json(), 201)
+            if path == "/api/risk/kill-switch": return self._send(ORCH.set_kill_switch(bool(data.get("enabled")), bool(data.get("liquidate"))).copy())
             if path.startswith("/api/runs/"):
                 pieces = path.split("/")
                 run_id, action = pieces[3], pieces[4]
                 if action == "approve": return self._send(ORCH.approve(run_id).json())
                 if action == "reject": return self._send(ORCH.reject(run_id).json())
                 return self._send({"error": "unknown action"}, 404)
-        except (KeyError, ValueError, json.JSONDecodeError) as exc:
+        except DomainError as exc:
+            return self._send({"error": str(exc)}, 409)
+        except (KeyError, ValueError, json.JSONDecodeError, IndexError) as exc:
             return self._send({"error": str(exc)}, 400)
         return self._send({"error": "not found"}, 404)
 
