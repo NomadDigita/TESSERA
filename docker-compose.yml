@@ -12,7 +12,7 @@ services:
       TESSERA_HOST: 0.0.0.0
       DATABASE_URL: postgresql://tessera:tessera@postgres:5432/tessera
       REDIS_URL: redis://redis:6379/0
-      OBJECT_STORAGE_ENDPOINT: http://objectstore:4566
+      OBJECT_STORAGE_ENDPOINT: http://objectstore:5000
       OBJECT_STORAGE_BUCKET: tessera-artifacts
       OBJECT_STORAGE_ACCESS_KEY: ${OBJECT_STORAGE_ACCESS_KEY:-tessera-minio}
       OBJECT_STORAGE_SECRET_KEY: ${OBJECT_STORAGE_SECRET_KEY:-change-this-minio-secret}
@@ -41,7 +41,7 @@ services:
     environment:
       DATABASE_URL: postgresql://tessera:tessera@postgres:5432/tessera
       REDIS_URL: redis://redis:6379/0
-      OBJECT_STORAGE_ENDPOINT: http://objectstore:4566
+      OBJECT_STORAGE_ENDPOINT: http://objectstore:5000
       OBJECT_STORAGE_BUCKET: tessera-artifacts
       OBJECT_STORAGE_ACCESS_KEY: ${OBJECT_STORAGE_ACCESS_KEY:-tessera-minio}
       OBJECT_STORAGE_SECRET_KEY: ${OBJECT_STORAGE_SECRET_KEY:-change-this-minio-secret}
@@ -85,16 +85,13 @@ services:
       timeout: 3s
       retries: 10
   objectstore:
-    image: localstack/localstack:stable
+    image: motoserver/moto:latest
     restart: unless-stopped
     environment:
-      SERVICES: s3
       AWS_ACCESS_KEY_ID: ${OBJECT_STORAGE_ACCESS_KEY:-tessera-local}
       AWS_SECRET_ACCESS_KEY: ${OBJECT_STORAGE_SECRET_KEY:-change-this-object-secret}
-    volumes:
-      - object-data:/var/lib/localstack
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:4566/_localstack/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/', timeout=2)"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -102,4 +99,3 @@ services:
 volumes:
   postgres-data:
   redis-data:
-  object-data:
