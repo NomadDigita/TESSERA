@@ -12,7 +12,7 @@ services:
       TESSERA_HOST: 0.0.0.0
       DATABASE_URL: postgresql://tessera:tessera@postgres:5432/tessera
       REDIS_URL: redis://redis:6379/0
-      OBJECT_STORAGE_ENDPOINT: http://minio:9000
+      OBJECT_STORAGE_ENDPOINT: http://objectstore:4566
       OBJECT_STORAGE_BUCKET: tessera-artifacts
       OBJECT_STORAGE_ACCESS_KEY: ${OBJECT_STORAGE_ACCESS_KEY:-tessera-minio}
       OBJECT_STORAGE_SECRET_KEY: ${OBJECT_STORAGE_SECRET_KEY:-change-this-minio-secret}
@@ -21,7 +21,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      minio:
+      objectstore:
         condition: service_healthy
     read_only: true
     tmpfs:
@@ -41,7 +41,7 @@ services:
     environment:
       DATABASE_URL: postgresql://tessera:tessera@postgres:5432/tessera
       REDIS_URL: redis://redis:6379/0
-      OBJECT_STORAGE_ENDPOINT: http://minio:9000
+      OBJECT_STORAGE_ENDPOINT: http://objectstore:4566
       OBJECT_STORAGE_BUCKET: tessera-artifacts
       OBJECT_STORAGE_ACCESS_KEY: ${OBJECT_STORAGE_ACCESS_KEY:-tessera-minio}
       OBJECT_STORAGE_SECRET_KEY: ${OBJECT_STORAGE_SECRET_KEY:-change-this-minio-secret}
@@ -50,7 +50,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      minio:
+      objectstore:
         condition: service_healthy
     read_only: true
     tmpfs:
@@ -84,17 +84,17 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
-  minio:
-    image: quay.io/minio/minio:latest
+  objectstore:
+    image: localstack/localstack:stable
     restart: unless-stopped
-    command: ["server", "/data", "--console-address", ":9001"]
     environment:
-      MINIO_ROOT_USER: ${OBJECT_STORAGE_ACCESS_KEY:-tessera-minio}
-      MINIO_ROOT_PASSWORD: ${OBJECT_STORAGE_SECRET_KEY:-change-this-minio-secret}
+      SERVICES: s3
+      AWS_ACCESS_KEY_ID: ${OBJECT_STORAGE_ACCESS_KEY:-tessera-local}
+      AWS_SECRET_ACCESS_KEY: ${OBJECT_STORAGE_SECRET_KEY:-change-this-object-secret}
     volumes:
-      - object-data:/data
+      - object-data:/var/lib/localstack
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
+      test: ["CMD", "curl", "-fsS", "http://localhost:4566/_localstack/health"]
       interval: 5s
       timeout: 3s
       retries: 10
