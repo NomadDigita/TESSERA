@@ -113,10 +113,13 @@ class Handler(BaseHTTPRequestHandler):
             return self._send({"edges": ORCH.market_graph.neighbors(path.rsplit("/", 1)[-1])})
         if path.startswith("/api/market-twin/"):
             return self._send(ORCH.market_twin.estimate(path.rsplit("/", 1)[-1]))
+        if path.startswith("/api/jobs/"):
+            job = ORCH.store.get_job(path.rsplit("/", 1)[-1])
+            return self._send(job if job else {"error": "job not found"}, 200 if job else 404)
         if path == "/api/runs":
-            return self._send({"runs": [run.json() for run in ORCH.runs.values()]})
+            return self._send({"runs": [run.json() for run in ORCH.refresh_runs().values()]})
         if path.startswith("/api/runs/"):
-            run = ORCH.runs.get(path.rsplit("/", 1)[-1])
+            run = ORCH.refresh_runs().get(path.rsplit("/", 1)[-1])
             return self._send(run.json() if run else {"error": "run not found"}, 200 if run else 404)
         return self._send({"error": "not found"}, 404)
 
@@ -134,6 +137,10 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 run = ORCH.create_run(data, idempotency_key=self.headers.get("Idempotency-Key"))
                 return self._send(run.json(), 201)
+            if path == "/api/runs/async":
+                if not self._principal("researcher"):
+                    return
+                return self._send(ORCH.enqueue_run(data), 202)
             if path == "/api/replay":
                 if not self._principal("researcher"):
                     return

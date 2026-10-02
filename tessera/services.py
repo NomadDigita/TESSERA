@@ -151,7 +151,7 @@ class CapitalOrchestrator:
         self.settings = settings or Settings(database_path=":memory:")
         self.store = store or SQLiteStore(":memory:")
         self.runs: dict[str, Run] = self.store.load_runs()
-        self.ledger = CausalLedger(self.store.load_ledger(), self.store.append_ledger)
+        self.ledger = CausalLedger(self.store.load_ledger(), self.store.append_ledger, self.store.load_ledger)
         if broker is not None:
             self.broker = broker
         elif self.settings.broker_mode == "bitget-demo":
@@ -190,7 +190,7 @@ class CapitalOrchestrator:
             if idempotency_key:
                 existing = self.store.get_idempotent_resource("create_run", idempotency_key)
                 if existing:
-                    return self.runs[existing]
+                    return self._get_run(existing)
         run_id = uid()
         event = {"title": event.get("title", "Demo event"), "severity": float(event.get("severity", 0.72)), "symbols": event.get("symbols") or ["NVDA", "QQQ"], "observations": event.get("observations") or []}
         run = Run(run_id, event, "RUNNING", now(), replay_of=replay_of)
@@ -217,8 +217,27 @@ class CapitalOrchestrator:
         METRICS.inc("decision_runs_total", labels={"status": run.status})
         return run
 
+    def refresh_runs(self) -> dict[str, Run]:
+        self.runs = self.store.load_runs()
+        return self.runs
+
+    def _get_run(self, run_id: str) -> Run:
+        runs = self.refresh_runs()
+        if run_id not in runs:
+            raise KeyError(run_id)
+        return runs[run_id]
+
+    def enqueue_run(self, event: dict) -> dict:
+        job_id = uid()
+        timestamp = now()
+        job = {"job_id": job_id, "job_type": "create_run", "payload": event,
+               "available_at": timestamp, "created_at": timestamp}
+        self.store.enqueue_job(job)
+        self.ledger.append("SYSTEM", "job_queued", "capital_orchestrator", {"job_id": job_id, "job_type": "create_run"})
+        return self.store.get_job(job_id)
+
     def approve(self, run_id: str) -> Run:
-        run = self.runs[run_id]
+        run = self._get_run(run_id)
         if run.status == "EXECUTED":
             return run
         if self.kill_switch_enabled:
@@ -240,7 +259,7 @@ class CapitalOrchestrator:
         return run
 
     def reconcile(self, run_id: str) -> Run:
-        run = self.runs[run_id]
+        run = self._get_run(run_id)
         if run.status != "SUBMITTED" or not run.order:
             return run
         receipt = self.broker.order_status(run.order)
@@ -260,7 +279,7 @@ class CapitalOrchestrator:
         self.ledger.append(run.run_id, "outcome", "portfolio_autopsy", run.autopsy)
 
     def reject(self, run_id: str) -> Run:
-        run = self.runs[run_id]
+        run = self._get_run(run_id)
         if run.status == "REJECTED":
             return run
         run.transition("REJECTED")
@@ -269,7 +288,7 @@ class CapitalOrchestrator:
         return run
 
     def replay(self, run_id: str) -> Run:
-        original = self.runs[run_id]
+        original = self._get_run(run_id)
         return self.create_run(dict(original.event), replay_of=run_id)
 
     @property
@@ -285,7 +304,7 @@ class CapitalOrchestrator:
             return state
 
     def health(self) -> dict:
-        return {"status": "ok", "environment": self.settings.environment, "mode": self.settings.broker_mode, "live_trading": self.settings.live_trading_enabled, "ledger_valid": self.ledger.verify(), "runs": len(self.runs), "kill_switch": self.kill_switch_enabled, "database": "sqlite"}
+        return {"status": "ok", "environment": self.settings.environment, "mode": self.settings.broker_mode, "live_trading": self.settings.live_trading_enabled, "ledger_valid": self.ledger.verify(), "runs": len(self.runs), "kill_switch": self.kill_switch_enabled, "database": "sqlite", "queue": self.store.queue_depth()}
 
     def readiness(self) -> tuple[bool, dict]:
         checks = {"database": self.store.ping(), "ledger": self.ledger.verify(), "live_trading_disabled": not self.settings.live_trading_enabled}

@@ -100,4 +100,13 @@ Intelligence endpoints:
 The Market Twin is deterministic and returns `insufficient_data` instead of
 inventing a forecast when fewer than three observations are available.
 
+Durable worker mode:
+
+- `POST /api/runs/async` enqueues a decision run and returns `202 Accepted`.
+- `GET /api/jobs/{job_id}` reports queued, running, retrying, failed, or succeeded state.
+- `python -m tessera.worker` runs the separately deployable worker.
+
+Jobs use atomic leases, bounded retries, idempotent run creation, and a database-
+serialized causal ledger. Docker Compose starts both API and worker processes.
+
 See [operations](docs/operations.md) and [security](docs/security.md) for deployment and incident procedures.

@@ -51,11 +51,17 @@ class LedgerEntry:
 
 
 class CausalLedger:
-    def __init__(self, entries: list[LedgerEntry] | None = None, append_hook=None) -> None:
+    def __init__(self, entries: list[LedgerEntry] | None = None, append_hook=None, load_hook=None) -> None:
         self.entries: list[LedgerEntry] = entries or []
         self._append_hook = append_hook
+        self._load_hook = load_hook
+
+    def _refresh(self) -> None:
+        if self._load_hook:
+            self.entries = self._load_hook()
 
     def append(self, run_id: str, entry_type: str, actor: str, payload: dict) -> LedgerEntry:
+        self._refresh()
         previous = self.entries[-1].entry_hash if self.entries else "GENESIS"
         raw = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         payload_hash = hashlib.sha256(raw.encode()).hexdigest()
@@ -65,9 +71,12 @@ class CausalLedger:
         self.entries.append(entry)
         if self._append_hook:
             self._append_hook(entry)
+            self._refresh()
+            entry = next(x for x in self.entries if x.entry_id == entry.entry_id)
         return entry
 
     def verify(self) -> bool:
+        self._refresh()
         previous = "GENESIS"
         for entry in self.entries:
             raw = json.dumps(entry.payload, sort_keys=True, separators=(",", ":"))
@@ -79,6 +88,7 @@ class CausalLedger:
         return True
 
     def json(self) -> list[dict]:
+        self._refresh()
         return [asdict(x) for x in self.entries]
 
 

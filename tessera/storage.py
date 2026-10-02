@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import hashlib
 from threading import RLock
+from datetime import datetime, timedelta, timezone
 
 from .domain import LedgerEntry, Run
 
@@ -94,6 +96,22 @@ class SQLiteStore:
                     payload TEXT NOT NULL,
                     PRIMARY KEY(strategy_id, version)
                 );
+                CREATE TABLE IF NOT EXISTS jobs (
+                    job_id TEXT PRIMARY KEY,
+                    job_type TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    result TEXT,
+                    error TEXT,
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    available_at TEXT NOT NULL,
+                    lease_until TEXT,
+                    worker_id TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_jobs_claim
+                    ON jobs(status, available_at, lease_until, created_at);
                 """
             )
 
@@ -119,8 +137,19 @@ class SQLiteStore:
         return runs
 
     def append_ledger(self, entry: LedgerEntry) -> None:
-        with self._lock, self._db:
-            self._db.execute(
+        with self._lock:
+            self._db.execute("BEGIN IMMEDIATE")
+            try:
+                row = self._db.execute(
+                    "SELECT entry_hash FROM ledger_entries ORDER BY sequence DESC LIMIT 1"
+                ).fetchone()
+                previous = row["entry_hash"] if row else "GENESIS"
+                raw = json.dumps(entry.payload, sort_keys=True, separators=(",", ":"))
+                entry.payload_hash = hashlib.sha256(raw.encode()).hexdigest()
+                entry.previous_hash = previous
+                material = f"{entry.run_id}|{entry.entry_type}|{entry.actor}|{entry.payload_hash}|{previous}"
+                entry.entry_hash = hashlib.sha256(material.encode()).hexdigest()
+                self._db.execute(
                 """INSERT INTO ledger_entries(entry_id,run_id,entry_type,actor,created_at,payload,
                    payload_hash,previous_hash,entry_hash) VALUES(?,?,?,?,?,?,?,?,?)""",
                 (
@@ -134,7 +163,11 @@ class SQLiteStore:
                     entry.previous_hash,
                     entry.entry_hash,
                 ),
-            )
+                )
+                self._db.commit()
+            except Exception:
+                self._db.rollback()
+                raise
 
     def load_ledger(self) -> list[LedgerEntry]:
         with self._lock:
@@ -265,6 +298,80 @@ class SQLiteStore:
                 "SELECT payload FROM strategy_versions ORDER BY created_at DESC, version DESC"
             ).fetchall()
         return [json.loads(row["payload"]) for row in rows]
+
+    def enqueue_job(self, job: dict) -> None:
+        with self._lock, self._db:
+            self._db.execute(
+                """INSERT INTO jobs(job_id,job_type,status,payload,attempts,available_at,created_at,updated_at)
+                   VALUES(?,?, 'queued', ?,0,?,?,?)""",
+                (job["job_id"], job["job_type"], json.dumps(job["payload"], sort_keys=True),
+                 job["available_at"], job["created_at"], job["created_at"]),
+            )
+
+    def claim_job(self, worker_id: str, lease_seconds: int = 60) -> dict | None:
+        current = datetime.now(timezone.utc)
+        current_text = current.isoformat()
+        lease_until = (current + timedelta(seconds=lease_seconds)).isoformat()
+        with self._lock:
+            self._db.execute("BEGIN IMMEDIATE")
+            try:
+                row = self._db.execute(
+                    """SELECT * FROM jobs
+                       WHERE available_at<=? AND (status='queued' OR (status='running' AND lease_until<?))
+                       ORDER BY created_at LIMIT 1""",
+                    (current_text, current_text),
+                ).fetchone()
+                if not row:
+                    self._db.commit()
+                    return None
+                self._db.execute(
+                    """UPDATE jobs SET status='running', worker_id=?, lease_until=?,
+                       attempts=attempts+1, updated_at=? WHERE job_id=?""",
+                    (worker_id, lease_until, current_text, row["job_id"]),
+                )
+                self._db.commit()
+            except Exception:
+                self._db.rollback()
+                raise
+        return self.get_job(row["job_id"])
+
+    def finish_job(self, job_id: str, result: dict) -> None:
+        timestamp = datetime.now(timezone.utc).isoformat()
+        with self._lock, self._db:
+            self._db.execute(
+                """UPDATE jobs SET status='succeeded', result=?, error=NULL, lease_until=NULL,
+                   updated_at=? WHERE job_id=? AND status='running'""",
+                (json.dumps(result, sort_keys=True), timestamp, job_id),
+            )
+
+    def fail_job(self, job_id: str, error: str, max_attempts: int = 3) -> None:
+        timestamp = datetime.now(timezone.utc)
+        with self._lock, self._db:
+            row = self._db.execute("SELECT attempts FROM jobs WHERE job_id=?", (job_id,)).fetchone()
+            if not row:
+                return
+            terminal = int(row["attempts"]) >= max_attempts
+            retry_at = (timestamp + timedelta(seconds=min(60, 2 ** int(row["attempts"])))).isoformat()
+            self._db.execute(
+                """UPDATE jobs SET status=?, error=?, lease_until=NULL, available_at=?,
+                   updated_at=? WHERE job_id=?""",
+                ("failed" if terminal else "queued", error[:2000], retry_at, timestamp.isoformat(), job_id),
+            )
+
+    def get_job(self, job_id: str) -> dict | None:
+        with self._lock:
+            row = self._db.execute("SELECT * FROM jobs WHERE job_id=?", (job_id,)).fetchone()
+        if not row:
+            return None
+        job = dict(row)
+        job["payload"] = json.loads(job["payload"])
+        job["result"] = json.loads(job["result"]) if job["result"] else None
+        return job
+
+    def queue_depth(self) -> dict:
+        with self._lock:
+            rows = self._db.execute("SELECT status, COUNT(*) AS count FROM jobs GROUP BY status").fetchall()
+        return {row["status"]: int(row["count"]) for row in rows}
 
     def ping(self) -> bool:
         try:

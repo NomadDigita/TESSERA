@@ -159,6 +159,33 @@ class TesseraTests(unittest.TestCase):
         self.assertEqual(run.proposals[0]["market_twin"]["status"], "estimated")
         self.assertTrue(any(entry.entry_type == "market_twin" for entry in system.ledger.entries))
 
+    def test_durable_worker_processes_queued_run_exactly_once(self):
+        from tessera.worker import Worker
+        with tempfile.TemporaryDirectory() as directory:
+            path = str(Path(directory) / "queue.db")
+            api = CapitalOrchestrator(SQLiteStore(path))
+            job = api.enqueue_run({"title": "Queued decision", "symbols": ["QQQ"]})
+            worker_system = CapitalOrchestrator(SQLiteStore(path))
+            worker = Worker(worker_system, "test-worker")
+            self.assertTrue(worker.process_one())
+            completed = api.store.get_job(job["job_id"])
+            self.assertEqual(completed["status"], "succeeded")
+            self.assertIn(completed["result"]["run_id"], worker_system.runs)
+            self.assertIn(completed["result"]["run_id"], api.refresh_runs())
+            self.assertFalse(worker.process_one())
+            self.assertTrue(api.ledger.verify())
+            api.close()
+            worker_system.close()
+
+    def test_expired_job_lease_is_reclaimed(self):
+        system = CapitalOrchestrator()
+        job = system.enqueue_run({"title": "Lease recovery"})
+        first = system.store.claim_job("crashed-worker", lease_seconds=-1)
+        second = system.store.claim_job("recovery-worker")
+        self.assertEqual(first["job_id"], job["job_id"])
+        self.assertEqual(second["job_id"], job["job_id"])
+        self.assertEqual(second["attempts"], 2)
+
 
 if __name__ == "__main__":
     unittest.main()

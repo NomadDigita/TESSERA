@@ -28,7 +28,11 @@ class ObservabilityTests(unittest.TestCase):
         system.create_run({"title": "Readiness"})
         ready, _ = system.readiness()
         self.assertTrue(ready)
-        system.ledger.entries[0].payload["title"] = "tampered"
+        with system.store._db:
+            system.store._db.execute(
+                "UPDATE ledger_entries SET payload=? WHERE sequence=1",
+                ('{"title":"tampered"}',),
+            )
         ready, result = system.readiness()
         self.assertFalse(ready)
         self.assertFalse(result["checks"]["ledger"])
