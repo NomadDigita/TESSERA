@@ -7,6 +7,7 @@ from .bitget import BitgetCredentials, BitgetDemoClient
 from .config import Settings
 from .domain import CausalLedger, ExecutionFrozen, OrderIntent, Run, now, uid
 from .llm import DeterministicProvider, LLMRouter, QwenProvider
+from .observability import METRICS
 from .storage import SQLiteStore
 
 
@@ -188,6 +189,7 @@ class CapitalOrchestrator:
         self.store.save_run(run)
         if idempotency_key:
             self.store.save_idempotency_key("create_run", idempotency_key, run_id)
+        METRICS.inc("decision_runs_total", labels={"status": run.status})
         return run
 
     def approve(self, run_id: str) -> Run:
@@ -209,6 +211,7 @@ class CapitalOrchestrator:
         if receipt["status"] == "FILLED":
             self._autopsy(run)
         self.store.save_run(run)
+        METRICS.inc("execution_actions_total", labels={"status": run.status})
         return run
 
     def reconcile(self, run_id: str) -> Run:
@@ -258,6 +261,11 @@ class CapitalOrchestrator:
 
     def health(self) -> dict:
         return {"status": "ok", "environment": self.settings.environment, "mode": self.settings.broker_mode, "live_trading": self.settings.live_trading_enabled, "ledger_valid": self.ledger.verify(), "runs": len(self.runs), "kill_switch": self.kill_switch_enabled, "database": "sqlite"}
+
+    def readiness(self) -> tuple[bool, dict]:
+        checks = {"database": self.store.ping(), "ledger": self.ledger.verify(), "live_trading_disabled": not self.settings.live_trading_enabled}
+        ready = all(checks.values())
+        return ready, {"status": "ready" if ready else "not_ready", "checks": checks}
 
     def close(self) -> None:
         self.store.close()

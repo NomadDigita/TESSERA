@@ -1,8 +1,21 @@
 [project]
 name = "tessera"
-version = "0.1.0"
-description = "TESSERA autonomous capital infrastructure demo"
+version = "0.4.0"
+description = "Controlled multi-agent autonomous capital infrastructure"
 requires-python = ">=3.10"
+
+[project.scripts]
+tessera = "tessera.server:serve"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["tessera"]
+
+[tool.setuptools.package-data]
+tessera = ["web/*.html", "web/*.css", "web/*.js"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -6,3 +6,7 @@ __pycache__/
 data/
 node_modules/
 dist/
+build/
+*.egg-info/
+work/
+outputs/

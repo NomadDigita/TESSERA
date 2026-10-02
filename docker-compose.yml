@@ -1,0 +1,25 @@
+services:
+  tessera:
+    build: .
+    init: true
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8787:8787"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      TESSERA_HOST: 0.0.0.0
+      TESSERA_DATABASE_PATH: /var/lib/tessera/tessera.db
+    volumes:
+      - tessera-data:/var/lib/tessera
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,noexec,nosuid
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+volumes:
+  tessera-data:

@@ -188,5 +188,12 @@ class SQLiteStore:
         with self._lock:
             return int(self._db.execute("SELECT COUNT(*) FROM users").fetchone()[0])
 
+    def ping(self) -> bool:
+        try:
+            with self._lock:
+                return self._db.execute("SELECT 1").fetchone()[0] == 1
+        except sqlite3.Error:
+            return False
+
     def close(self) -> None:
         self._db.close()

@@ -3,13 +3,16 @@ from __future__ import annotations
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from time import perf_counter
 from urllib.parse import urlparse
+import uuid
 
 from .auth import AuthError, AuthManager
 from .config import Settings
 from .domain import DomainError
 from .services import CapitalOrchestrator
 from .storage import SQLiteStore
+from .observability import LOGGER, METRICS
 
 
 SETTINGS = Settings.from_env()
@@ -38,6 +41,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
+        self.send_header("X-Request-ID", getattr(self, "request_id", "unknown"))
         self.send_header("Cache-Control", "no-store" if content_type.startswith("application/json") else "public, max-age=300")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
@@ -46,6 +50,18 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Security-Policy", "default-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'")
         self.end_headers()
         self.wfile.write(body)
+        path = urlparse(self.path).path
+        duration_ms = round((perf_counter() - getattr(self, "request_started", perf_counter())) * 1000, 2)
+        METRICS.inc("http_responses_total", labels={"method": self.command, "path": self._metric_path(path), "status": str(status)})
+        LOGGER.info("http_request", extra={"context": {"request_id": getattr(self, "request_id", "unknown"), "method": self.command, "path": path, "status": status, "duration_ms": duration_ms}})
+
+    @staticmethod
+    def _metric_path(path: str) -> str:
+        return "/api/runs/{id}" if path.startswith("/api/runs/") else path
+
+    def _begin(self) -> None:
+        self.request_id = self.headers.get("X-Request-ID", str(uuid.uuid4()))[:128]
+        self.request_started = perf_counter()
 
     def _body(self) -> dict:
         length = int(self.headers.get("Content-Length", "0"))
@@ -69,12 +85,20 @@ class Handler(BaseHTTPRequestHandler):
             return None
 
     def do_GET(self) -> None:
+        self._begin()
         path = urlparse(self.path).path
         if path in STATIC_ROUTES:
             filename, content_type = STATIC_ROUTES[path]
             return self._send((WEB_ROOT / filename).read_bytes(), content_type=content_type)
         if path == "/api/health":
             return self._send(ORCH.health())
+        if path == "/api/ready":
+            ready, result = ORCH.readiness()
+            return self._send(result, 200 if ready else 503)
+        if path == "/metrics":
+            METRICS.gauge("runs", len(ORCH.runs))
+            METRICS.gauge("kill_switch", 1 if ORCH.kill_switch_enabled else 0)
+            return self._send(METRICS.render(), content_type="text/plain; version=0.0.4")
         if not self._principal("viewer"):
             return
         if path == "/api/portfolio":
@@ -91,6 +115,7 @@ class Handler(BaseHTTPRequestHandler):
         return self._send({"error": "not found"}, 404)
 
     def do_POST(self) -> None:
+        self._begin()
         path = urlparse(self.path).path
         try:
             data = self._body()
@@ -134,8 +159,19 @@ class Handler(BaseHTTPRequestHandler):
         return
 
 
+class TesseraHTTPServer(ThreadingHTTPServer):
+    daemon_threads = True
+    allow_reuse_address = True
+
+
 def serve(host: str | None = None, port: int | None = None) -> None:
     host = host or SETTINGS.host
     port = port or SETTINGS.port
-    print(f"TESSERA running at http://{host}:{port} ({SETTINGS.broker_mode} mode)")
-    ThreadingHTTPServer((host, port), Handler).serve_forever()
+    LOGGER.info("server_start", extra={"context": {"host": host, "port": port, "mode": SETTINGS.broker_mode, "environment": SETTINGS.environment}})
+    server = TesseraHTTPServer((host, port), Handler)
+    try:
+        server.serve_forever()
+    finally:
+        server.server_close()
+        ORCH.close()
+        LOGGER.info("server_stop")
