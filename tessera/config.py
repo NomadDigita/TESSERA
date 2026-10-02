@@ -28,6 +28,10 @@ class Settings:
     qwen_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     qwen_model: str = "qwen-plus"
     dashscope_api_key: str = ""
+    bitget_api_key: str = ""
+    bitget_api_secret: str = ""
+    bitget_api_passphrase: str = ""
+    bitget_base_url: str = "https://api.bitget.com"
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -46,6 +50,10 @@ class Settings:
             qwen_base_url=os.getenv("QWEN_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
             qwen_model=os.getenv("QWEN_MODEL", "qwen-plus"),
             dashscope_api_key=os.getenv("DASHSCOPE_API_KEY", ""),
+            bitget_api_key=os.getenv("BITGET_API_KEY", ""),
+            bitget_api_secret=os.getenv("BITGET_API_SECRET", ""),
+            bitget_api_passphrase=os.getenv("BITGET_API_PASSPHRASE", ""),
+            bitget_base_url=os.getenv("BITGET_BASE_URL", "https://api.bitget.com"),
         )
         settings.validate()
         return settings
@@ -57,8 +65,12 @@ class Settings:
             raise ValueError("TESSERA_MAX_ORDER_NOTIONAL must be positive")
         if self.max_gross_exposure <= 0 or self.max_single_asset_exposure <= 0:
             raise ValueError("Exposure limits must be positive")
-        if self.broker_mode != "mock-paper":
-            raise ValueError("Only mock-paper broker mode is supported in this release")
+        if self.broker_mode not in {"mock-paper", "bitget-demo"}:
+            raise ValueError("TESSERA_BROKER_MODE must be mock-paper or bitget-demo")
+        if self.broker_mode == "bitget-demo" and not all((self.bitget_api_key, self.bitget_api_secret, self.bitget_api_passphrase)):
+            raise ValueError("Bitget demo credentials are required when TESSERA_BROKER_MODE=bitget-demo")
+        if not self.bitget_base_url.startswith("https://"):
+            raise ValueError("BITGET_BASE_URL must use HTTPS")
         if self.live_trading_enabled:
             raise ValueError("Live trading is intentionally disabled")
         if self.llm_provider not in {"deterministic", "qwen"}:

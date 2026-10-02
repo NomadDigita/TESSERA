@@ -111,6 +111,11 @@ class TesseraTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             Settings(llm_provider="qwen", dashscope_api_key="").validate()
 
+    def test_bitget_demo_mode_requires_all_credentials(self):
+        from tessera.config import Settings
+        with self.assertRaises(ValueError):
+            Settings(broker_mode="bitget-demo", bitget_api_key="only-key").validate()
+
 
 if __name__ == "__main__":
     unittest.main()
