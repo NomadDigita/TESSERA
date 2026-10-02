@@ -24,6 +24,10 @@ class Settings:
     max_order_notional: float = 1500.0
     max_gross_exposure: float = 5000.0
     max_single_asset_exposure: float = 2500.0
+    llm_provider: str = "deterministic"
+    qwen_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    qwen_model: str = "qwen-plus"
+    dashscope_api_key: str = ""
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -38,6 +42,10 @@ class Settings:
             max_order_notional=float(os.getenv("TESSERA_MAX_ORDER_NOTIONAL", "1500")),
             max_gross_exposure=float(os.getenv("TESSERA_MAX_GROSS_EXPOSURE", "5000")),
             max_single_asset_exposure=float(os.getenv("TESSERA_MAX_SINGLE_ASSET_EXPOSURE", "2500")),
+            llm_provider=os.getenv("TESSERA_LLM_PROVIDER", "deterministic"),
+            qwen_base_url=os.getenv("QWEN_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
+            qwen_model=os.getenv("QWEN_MODEL", "qwen-plus"),
+            dashscope_api_key=os.getenv("DASHSCOPE_API_KEY", ""),
         )
         settings.validate()
         return settings
@@ -53,6 +61,10 @@ class Settings:
             raise ValueError("Only mock-paper broker mode is supported in this release")
         if self.live_trading_enabled:
             raise ValueError("Live trading is intentionally disabled")
+        if self.llm_provider not in {"deterministic", "qwen"}:
+            raise ValueError("TESSERA_LLM_PROVIDER must be deterministic or qwen")
+        if self.llm_provider == "qwen" and not self.dashscope_api_key:
+            raise ValueError("DASHSCOPE_API_KEY is required when TESSERA_LLM_PROVIDER=qwen")
 
     def prepare_runtime(self) -> None:
         if self.database_path != ":memory:":

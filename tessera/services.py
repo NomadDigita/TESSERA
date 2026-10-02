@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from threading import RLock
+from .agents import AgentCouncil, CapitalParliament
 from .config import Settings
 from .domain import CausalLedger, ExecutionFrozen, OrderIntent, Run, now, uid
+from .llm import DeterministicProvider, LLMRouter, QwenProvider
 from .storage import SQLiteStore
 
 
@@ -82,23 +84,6 @@ class RiskConstitution:
         return {"decision": decision, "violations": violations, "approved_orders": [] if hard else orders, "constitution_version": self.version}
 
 
-class AgentRuntime:
-    names = ["market_intelligence", "cross_market_analyst", "market_twin_analyst", "adversarial_debater", "portfolio_constructor", "liquidity_guardian"]
-
-    def run(self, event: dict) -> list[dict]:
-        severity = float(event.get("severity", 0.72))
-        title = event.get("title", "Unspecified market event")
-        outputs = [
-            {"agent": "market_intelligence", "decision": "EVENT_CONFIRMED", "confidence": round(min(0.98, severity + 0.12), 2), "finding": f"{title} is material enough to reprice tokenized equities."},
-            {"agent": "cross_market_analyst", "decision": "RISK_ON_HEDGE", "confidence": 0.74, "finding": "Technology exposure and crypto liquidity are likely to move together."},
-            {"agent": "market_twin_analyst", "decision": "UNDERPRICED_EVENT", "confidence": 0.78, "finding": "Market Twin fair-value range implies a positive repricing gap."},
-            {"agent": "adversarial_debater", "decision": "CHALLENGE", "confidence": 0.68, "finding": "Weekend liquidity may make the apparent edge untradeable; cap notional."},
-            {"agent": "portfolio_constructor", "decision": "PROPOSE_PAIR", "confidence": 0.76, "finding": "Use a capped long NVDA / smaller QQQ hedge proposal."},
-            {"agent": "liquidity_guardian", "decision": "PASS_WITH_CAP", "confidence": 0.81, "finding": "Spread is acceptable under the demo liquidity profile with a $1,500 notional cap."},
-        ]
-        return outputs
-
-
 class CapitalOrchestrator:
     def __init__(self, store: SQLiteStore | None = None, settings: Settings | None = None) -> None:
         self.settings = settings or Settings(database_path=":memory:")
@@ -108,7 +93,9 @@ class CapitalOrchestrator:
         self.broker = MockPaperBroker(self.store)
         self.risk = RiskConstitution(self.settings.max_order_notional, self.settings.require_human_approval,
                                      self.settings.max_gross_exposure, self.settings.max_single_asset_exposure)
-        self.agents = AgentRuntime()
+        provider = QwenProvider(self.settings.dashscope_api_key, self.settings.qwen_base_url, self.settings.qwen_model) if self.settings.llm_provider == "qwen" else DeterministicProvider()
+        self.agents = AgentCouncil(LLMRouter(provider, self.store.record_model_call))
+        self.parliament = CapitalParliament()
         self._lock = RLock()
 
     def create_run(self, event: dict, replay_of: str | None = None, idempotency_key: str | None = None) -> Run:
@@ -125,9 +112,8 @@ class CapitalOrchestrator:
         run.agents = self.agents.run(event)
         for output in run.agents:
             self.ledger.append(run_id, "agent_output", f"agent:{output['agent']}", output)
-        proposal_orders = [{"symbol": "NVDA", "side": "BUY", "quantity": 5.0, "reference_price": 150.0, "reason": "Market Twin repricing gap", "sector": "Technology"}]
-        run.proposals = [{"strategy": "AfterHoursEventRotation", "version": 1, "proposed_orders": proposal_orders, "confidence": 0.76}]
-        parliament = {"decision": "approve", "vote_summary": {"approve": 4, "defer": 1, "reject": 1}, "confidence": 0.76, "dissent": ["Weekend liquidity may widen unexpectedly"], "proposed_orders": proposal_orders, "evidence_refs": ["market_twin:fair_value_range", "agent:liquidity_guardian"]}
+        parliament = self.parliament.deliberate(run.agents, event)
+        run.proposals = [{"strategy": "AfterHoursEventRotation", "version": 1, "proposed_orders": parliament["proposed_orders"], "confidence": parliament["confidence"]}]
         run.parliament = parliament
         self.ledger.append(run_id, "vote", "capital_parliament", parliament)
         run.risk = self.risk.evaluate(parliament, self.broker.snapshot(), event)

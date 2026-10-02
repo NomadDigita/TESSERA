@@ -42,6 +42,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/health": return self._send(ORCH.health())
         if path == "/api/portfolio": return self._send(ORCH.broker.snapshot())
         if path == "/api/ledger": return self._send({"valid": ORCH.ledger.verify(), "entries": ORCH.ledger.json()})
+        if path == "/api/model-calls": return self._send({"calls": ORCH.store.list_model_calls()})
         if path == "/api/runs": return self._send({"runs": [x.json() for x in ORCH.runs.values()]})
         if path.startswith("/api/runs/"):
             run_id = path.rsplit("/", 1)[-1]

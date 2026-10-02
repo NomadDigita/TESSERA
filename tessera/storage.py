@@ -54,6 +54,16 @@ class SQLiteStore:
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     PRIMARY KEY(scope, key)
                 );
+                CREATE TABLE IF NOT EXISTS model_calls (
+                    call_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    provider TEXT NOT NULL,
+                    model TEXT NOT NULL,
+                    agent TEXT NOT NULL,
+                    input_hash TEXT NOT NULL,
+                    latency_ms REAL NOT NULL,
+                    validation_status TEXT NOT NULL
+                );
                 """
             )
 
@@ -134,6 +144,22 @@ class SQLiteStore:
                 "INSERT OR IGNORE INTO idempotency_keys(scope,key,resource_id) VALUES(?,?,?)",
                 (scope, key, resource_id),
             )
+
+    def record_model_call(self, call: dict) -> None:
+        with self._lock, self._db:
+            self._db.execute(
+                """INSERT INTO model_calls(provider,model,agent,input_hash,latency_ms,validation_status)
+                   VALUES(?,?,?,?,?,?)""",
+                (call["provider"], call["model"], call["agent"], call["input_hash"],
+                 call["latency_ms"], call["validation_status"]),
+            )
+
+    def list_model_calls(self, limit: int = 100) -> list[dict]:
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT * FROM model_calls ORDER BY call_id DESC LIMIT ?", (limit,)
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def close(self) -> None:
         self._db.close()
