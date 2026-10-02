@@ -1,0 +1,8 @@
+[project]
+name = "tessera"
+version = "0.1.0"
+description = "TESSERA autonomous capital infrastructure demo"
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
