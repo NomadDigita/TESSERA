@@ -104,7 +104,8 @@ class Run:
             "RUNNING": {"AWAITING_APPROVAL", "APPROVED", "REJECTED", "CANCELLED", "FAILED"},
             "AWAITING_APPROVAL": {"EXECUTING", "REJECTED", "CANCELLED"},
             "APPROVED": {"EXECUTING", "CANCELLED"},
-            "EXECUTING": {"EXECUTED", "FAILED"},
+            "EXECUTING": {"SUBMITTED", "EXECUTED", "FAILED"},
+            "SUBMITTED": {"EXECUTED", "FAILED", "CANCELLED"},
             "EXECUTED": {"LIQUIDATED"},
             "REJECTED": set(), "CANCELLED": set(), "FAILED": set(), "LIQUIDATED": set(),
         }

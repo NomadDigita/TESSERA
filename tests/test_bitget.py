@@ -5,6 +5,8 @@ import json
 import unittest
 
 from tessera.bitget import BitgetCredentials, BitgetDemoClient, BitgetError, sign_request
+from tessera.domain import OrderIntent
+from tessera.services import BitgetDemoBroker, CapitalOrchestrator
 
 
 class RecordingTransport:
@@ -55,6 +57,24 @@ class BitgetTests(unittest.TestCase):
     def test_non_https_base_url_is_rejected(self):
         with self.assertRaises(ValueError):
             BitgetDemoClient(BitgetCredentials("key", "secret", "pass"), base_url="http://api.bitget.com")
+
+    def test_demo_broker_keeps_submission_separate_from_fill(self):
+        class FakeClient:
+            def get_assets(self): return {"data": []}
+            def get_positions(self): return {"data": []}
+            def place_order(self, **kwargs): return {"data": {"orderId": "42", "clientOid": kwargs["client_oid"]}}
+            def get_order(self, **kwargs): return {"data": {"orderStatus": "filled", "avgPrice": "149.5"}}
+
+        broker = BitgetDemoBroker(FakeClient())
+        system = CapitalOrchestrator(broker=broker)
+        run = system.create_run({"title": "Demo submission", "symbols": ["rAAPLUSDT"]})
+        submitted = system.approve(run.run_id)
+        self.assertEqual(submitted.status, "SUBMITTED")
+        self.assertIsNone(submitted.autopsy)
+        reconciled = system.reconcile(run.run_id)
+        self.assertEqual(reconciled.status, "EXECUTED")
+        self.assertEqual(reconciled.order["fill_price"], 149.5)
+        self.assertIsNotNone(reconciled.autopsy)
 
 
 if __name__ == "__main__":

@@ -62,6 +62,7 @@ class Handler(BaseHTTPRequestHandler):
                 run_id, action = pieces[3], pieces[4]
                 if action == "approve": return self._send(ORCH.approve(run_id).json())
                 if action == "reject": return self._send(ORCH.reject(run_id).json())
+                if action == "reconcile": return self._send(ORCH.reconcile(run_id).json())
                 return self._send({"error": "unknown action"}, 404)
         except DomainError as exc:
             return self._send({"error": str(exc)}, 409)

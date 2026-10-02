@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from threading import RLock
+import re
 from .agents import AgentCouncil, CapitalParliament
+from .bitget import BitgetCredentials, BitgetDemoClient
 from .config import Settings
 from .domain import CausalLedger, ExecutionFrozen, OrderIntent, Run, now, uid
 from .llm import DeterministicProvider, LLMRouter, QwenProvider
@@ -47,6 +49,63 @@ class MockPaperBroker:
     def liquidate_all(self) -> list[dict]:
         return [self.cancel(symbol) for symbol, position in list(self.positions.items()) if position["quantity"] != 0]
 
+    def order_status(self, receipt: dict) -> dict:
+        return receipt
+
+
+class BitgetDemoBroker:
+    """Demo-only exchange broker. Submission and fills are deliberately separate states."""
+
+    def __init__(self, client: BitgetDemoClient) -> None:
+        self.client = client
+
+    def snapshot(self) -> dict:
+        assets = self.client.get_assets().get("data") or []
+        positions = self.client.get_positions().get("data") or []
+        return {"cash": 0.0, "assets": assets, "positions": self._positions(positions), "mode": "bitget-demo"}
+
+    @staticmethod
+    def _positions(items: list[dict]) -> list[dict]:
+        normalized = []
+        for item in items:
+            normalized.append({
+                "symbol": item.get("symbol", ""),
+                "quantity": float(item.get("total", item.get("qty", item.get("position", 0))) or 0),
+                "avg_price": float(item.get("openPriceAvg", item.get("avgPrice", 0)) or 0),
+            })
+        return normalized
+
+    def place(self, order: OrderIntent) -> dict:
+        client_oid = f"tessera-{uid().replace('-', '')[:20]}"
+        result = self.client.place_order(
+            symbol=order.symbol, side=order.side.lower(), quantity=order.quantity,
+            order_type="limit", price=order.reference_price, client_oid=client_oid,
+        )
+        data = result["data"]
+        return {
+            "order_id": data["orderId"], "client_oid": data.get("clientOid") or client_oid,
+            "symbol": order.symbol, "side": order.side, "quantity": order.quantity,
+            "limit_price": order.reference_price, "status": "SUBMITTED", "submitted_at": now(),
+        }
+
+    def order_status(self, receipt: dict) -> dict:
+        result = self.client.get_order(order_id=receipt["order_id"])
+        data = result["data"]
+        status = str(data.get("orderStatus", "unknown")).lower()
+        mapped = {"filled": "FILLED", "cancelled": "CANCELLED", "canceled": "CANCELLED", "rejected": "FAILED"}.get(status, "SUBMITTED")
+        return {**receipt, "status": mapped, "exchange_status": status, "fill_price": float(data.get("avgPrice") or 0)}
+
+    def cancel(self, symbol: str, receipt: dict | None = None) -> dict:
+        if not receipt:
+            return {"status": "NO_ORDER", "symbol": symbol}
+        result = self.client.cancel_order(symbol=symbol, order_id=receipt["order_id"])
+        return {"status": "CANCELLED", "symbol": symbol, "exchange": result["data"]}
+
+    def liquidate_all(self) -> list[dict]:
+        # Automatic market liquidation is intentionally disabled until symbol-specific
+        # quantity semantics are verified against the connected demo account.
+        return []
+
 
 class RiskConstitution:
     version = "constitution-v1"
@@ -67,8 +126,9 @@ class RiskConstitution:
             notional = item["quantity"] * item["reference_price"]
             if notional > self.max_order_notional:
                 violations.append({"rule": "MAX_ORDER_NOTIONAL", "observed": round(notional, 2), "limit": self.max_order_notional, "severity": "hard"})
-            if item["symbol"] not in {"NVDA", "QQQ", "TSLA", "AAPL"}:
-                violations.append({"rule": "ASSET_NOT_ALLOWED", "observed": item["symbol"], "limit": "NVDA/QQQ/TSLA/AAPL", "severity": "hard"})
+            symbol = item["symbol"]
+            if symbol not in {"NVDA", "QQQ", "TSLA", "AAPL"} and not re.fullmatch(r"r[A-Z]{1,10}USDT", symbol):
+                violations.append({"rule": "ASSET_NOT_ALLOWED", "observed": symbol, "limit": "approved symbols or r<US_TICKER>USDT", "severity": "hard"})
             current = next((p for p in portfolio.get("positions", []) if p["symbol"] == item["symbol"]), None)
             current_exposure = abs(current["quantity"] * current["avg_price"]) if current else 0.0
             if current_exposure + notional > self.max_single_asset_exposure:
@@ -85,12 +145,18 @@ class RiskConstitution:
 
 
 class CapitalOrchestrator:
-    def __init__(self, store: SQLiteStore | None = None, settings: Settings | None = None) -> None:
+    def __init__(self, store: SQLiteStore | None = None, settings: Settings | None = None, broker=None) -> None:
         self.settings = settings or Settings(database_path=":memory:")
         self.store = store or SQLiteStore(":memory:")
         self.runs: dict[str, Run] = self.store.load_runs()
         self.ledger = CausalLedger(self.store.load_ledger(), self.store.append_ledger)
-        self.broker = MockPaperBroker(self.store)
+        if broker is not None:
+            self.broker = broker
+        elif self.settings.broker_mode == "bitget-demo":
+            credentials = BitgetCredentials(self.settings.bitget_api_key, self.settings.bitget_api_secret, self.settings.bitget_api_passphrase)
+            self.broker = BitgetDemoBroker(BitgetDemoClient(credentials, self.settings.bitget_base_url))
+        else:
+            self.broker = MockPaperBroker(self.store)
         self.risk = RiskConstitution(self.settings.max_order_notional, self.settings.require_human_approval,
                                      self.settings.max_gross_exposure, self.settings.max_single_asset_exposure)
         provider = QwenProvider(self.settings.dashscope_api_key, self.settings.qwen_base_url, self.settings.qwen_model) if self.settings.llm_provider == "qwen" else DeterministicProvider()
@@ -137,13 +203,33 @@ class CapitalOrchestrator:
         order = run.risk["approved_orders"][0]
         receipt = self.broker.place(OrderIntent(**order))
         run.order = receipt
-        run.transition("EXECUTED")
+        run.transition("EXECUTED" if receipt["status"] == "FILLED" else "SUBMITTED")
         self.ledger.append(run_id, "approval", "operator", {"approved": True})
-        self.ledger.append(run_id, "fill", "execution_engine", receipt)
-        run.autopsy = {"thesis": "Event-driven repricing gap", "expected": "Positive NVDA repricing", "realized": "Paper fill completed", "risk_controls": "Notional cap applied", "lesson": "Monitor spread before scaling"}
-        self.ledger.append(run_id, "outcome", "portfolio_autopsy", run.autopsy)
+        self.ledger.append(run_id, "fill" if receipt["status"] == "FILLED" else "order", "execution_engine", receipt)
+        if receipt["status"] == "FILLED":
+            self._autopsy(run)
         self.store.save_run(run)
         return run
+
+    def reconcile(self, run_id: str) -> Run:
+        run = self.runs[run_id]
+        if run.status != "SUBMITTED" or not run.order:
+            return run
+        receipt = self.broker.order_status(run.order)
+        run.order = receipt
+        if receipt["status"] == "FILLED":
+            run.transition("EXECUTED")
+            self.ledger.append(run_id, "fill", "execution_engine", receipt)
+            self._autopsy(run)
+        elif receipt["status"] in {"FAILED", "CANCELLED"}:
+            run.transition("FAILED" if receipt["status"] == "FAILED" else "CANCELLED")
+            self.ledger.append(run_id, "order_terminal", "execution_engine", receipt)
+        self.store.save_run(run)
+        return run
+
+    def _autopsy(self, run: Run) -> None:
+        run.autopsy = {"thesis": "Event-driven repricing gap", "expected": "Positive repricing", "realized": "Fill confirmed", "risk_controls": "Notional cap applied", "lesson": "Monitor spread before scaling"}
+        self.ledger.append(run.run_id, "outcome", "portfolio_autopsy", run.autopsy)
 
     def reject(self, run_id: str) -> Run:
         run = self.runs[run_id]
