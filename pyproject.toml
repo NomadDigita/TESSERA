@@ -1,6 +1,6 @@
 [project]
 name = "tessera"
-version = "0.4.0"
+version = "0.5.0"
 description = "Controlled multi-agent autonomous capital infrastructure"
 requires-python = ">=3.10"
 

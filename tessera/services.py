@@ -7,6 +7,7 @@ from .bitget import BitgetCredentials, BitgetDemoClient
 from .config import Settings
 from .domain import CausalLedger, ExecutionFrozen, OrderIntent, Run, now, uid
 from .llm import DeterministicProvider, LLMRouter, QwenProvider
+from .intelligence import MarketGraph, MarketTwin, StrategyGenomeRegistry
 from .observability import METRICS
 from .storage import SQLiteStore
 
@@ -163,7 +164,26 @@ class CapitalOrchestrator:
         provider = QwenProvider(self.settings.dashscope_api_key, self.settings.qwen_base_url, self.settings.qwen_model) if self.settings.llm_provider == "qwen" else DeterministicProvider()
         self.agents = AgentCouncil(LLMRouter(provider, self.store.record_model_call))
         self.parliament = CapitalParliament()
+        self.market_graph = MarketGraph(self.store)
+        self.market_twin = MarketTwin(self.store, self.market_graph)
+        self.strategies = StrategyGenomeRegistry(self.store)
+        self._ensure_default_strategy()
         self._lock = RLock()
+
+    def _ensure_default_strategy(self) -> None:
+        strategy_id = "after-hours-event-rotation"
+        if self.store.latest_strategy_version(strategy_id):
+            return
+        self.strategies.publish({
+            "strategy_id": strategy_id,
+            "name": "AfterHoursEventRotation",
+            "hypothesis": "Tokenized equities can reprice material events before native markets reopen.",
+            "signals": ["event_severity", "cross_market_confirmation", "fair_value_gap"],
+            "universe": ["NVDA", "TSLA", "QQQ", "AAPL"],
+            "holding_period": "1h-24h", "risk_profile": "medium",
+            "capital_requirements": {"minimum": 100, "maximum": 1500},
+            "constraints": {"max_position_pct": 0.2, "max_drawdown_pct": 0.05},
+        })
 
     def create_run(self, event: dict, replay_of: str | None = None, idempotency_key: str | None = None) -> Run:
         with self._lock:
@@ -172,15 +192,20 @@ class CapitalOrchestrator:
                 if existing:
                     return self.runs[existing]
         run_id = uid()
-        event = {"title": event.get("title", "Demo event"), "severity": float(event.get("severity", 0.72)), "symbols": event.get("symbols") or ["NVDA", "QQQ"]}
+        event = {"title": event.get("title", "Demo event"), "severity": float(event.get("severity", 0.72)), "symbols": event.get("symbols") or ["NVDA", "QQQ"], "observations": event.get("observations") or []}
         run = Run(run_id, event, "RUNNING", now(), replay_of=replay_of)
         self.runs[run_id] = run
         self.ledger.append(run_id, "event", "system:event_ingestor", event)
+        for observation in event["observations"]:
+            recorded = self.market_twin.observe(**observation)
+            self.ledger.append(run_id, "observation", "market_twin", recorded)
+        twin = self.market_twin.estimate(event["symbols"][0], event["severity"])
+        self.ledger.append(run_id, "market_twin", "market_twin", twin)
         run.agents = self.agents.run(event)
         for output in run.agents:
             self.ledger.append(run_id, "agent_output", f"agent:{output['agent']}", output)
         parliament = self.parliament.deliberate(run.agents, event)
-        run.proposals = [{"strategy": "AfterHoursEventRotation", "version": 1, "proposed_orders": parliament["proposed_orders"], "confidence": parliament["confidence"]}]
+        run.proposals = [{"strategy_id": "after-hours-event-rotation", "strategy": "AfterHoursEventRotation", "version": 1, "proposed_orders": parliament["proposed_orders"], "confidence": parliament["confidence"], "market_twin": twin}]
         run.parliament = parliament
         self.ledger.append(run_id, "vote", "capital_parliament", parliament)
         run.risk = self.risk.evaluate(parliament, self.broker.snapshot(), event)

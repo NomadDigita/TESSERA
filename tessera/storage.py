@@ -71,6 +71,29 @@ class SQLiteStore:
                     active INTEGER NOT NULL DEFAULT 1,
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
+                CREATE TABLE IF NOT EXISTS market_observations (
+                    observation_id TEXT PRIMARY KEY,
+                    symbol TEXT NOT NULL,
+                    observed_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_observations_symbol_time
+                    ON market_observations(symbol, observed_at DESC);
+                CREATE TABLE IF NOT EXISTS market_edges (
+                    edge_id TEXT PRIMARY KEY,
+                    source TEXT NOT NULL,
+                    target TEXT NOT NULL,
+                    relation TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_edges_source_target ON market_edges(source, target);
+                CREATE TABLE IF NOT EXISTS strategy_versions (
+                    strategy_id TEXT NOT NULL,
+                    version INTEGER NOT NULL,
+                    created_at TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    PRIMARY KEY(strategy_id, version)
+                );
                 """
             )
 
@@ -187,6 +210,61 @@ class SQLiteStore:
     def count_users(self) -> int:
         with self._lock:
             return int(self._db.execute("SELECT COUNT(*) FROM users").fetchone()[0])
+
+    def save_market_observation(self, observation: dict) -> None:
+        with self._lock, self._db:
+            self._db.execute(
+                "INSERT INTO market_observations(observation_id,symbol,observed_at,payload) VALUES(?,?,?,?)",
+                (observation["observation_id"], observation["symbol"], observation["observed_at"],
+                 json.dumps(observation, sort_keys=True, separators=(",", ":"))),
+            )
+
+    def list_market_observations(self, symbol: str, limit: int = 100) -> list[dict]:
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT payload FROM market_observations WHERE symbol=? ORDER BY observed_at DESC LIMIT ?",
+                (symbol, limit),
+            ).fetchall()
+        return [json.loads(row["payload"]) for row in rows]
+
+    def save_market_edge(self, edge: dict) -> None:
+        with self._lock, self._db:
+            self._db.execute(
+                "INSERT INTO market_edges(edge_id,source,target,relation,payload) VALUES(?,?,?,?,?)",
+                (edge["edge_id"], edge["source"], edge["target"], edge["relation"],
+                 json.dumps(edge, sort_keys=True, separators=(",", ":"))),
+            )
+
+    def list_market_edges(self, asset: str) -> list[dict]:
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT payload FROM market_edges WHERE source=? OR target=? ORDER BY relation, edge_id",
+                (asset, asset),
+            ).fetchall()
+        return [json.loads(row["payload"]) for row in rows]
+
+    def save_strategy_version(self, strategy: dict) -> None:
+        with self._lock, self._db:
+            self._db.execute(
+                "INSERT INTO strategy_versions(strategy_id,version,created_at,payload) VALUES(?,?,?,?)",
+                (strategy["strategy_id"], strategy["version"], strategy["created_at"],
+                 json.dumps(strategy, sort_keys=True, separators=(",", ":"))),
+            )
+
+    def latest_strategy_version(self, strategy_id: str) -> dict | None:
+        with self._lock:
+            row = self._db.execute(
+                "SELECT payload FROM strategy_versions WHERE strategy_id=? ORDER BY version DESC LIMIT 1",
+                (strategy_id,),
+            ).fetchone()
+        return json.loads(row["payload"]) if row else None
+
+    def list_strategy_versions(self) -> list[dict]:
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT payload FROM strategy_versions ORDER BY created_at DESC, version DESC"
+            ).fetchall()
+        return [json.loads(row["payload"]) for row in rows]
 
     def ping(self) -> bool:
         try:

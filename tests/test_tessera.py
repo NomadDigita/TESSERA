@@ -126,6 +126,39 @@ class TesseraTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             Settings(auth_enabled=True, session_secret="too-short").validate()
 
+    def test_market_twin_refuses_to_guess_without_evidence(self):
+        system = CapitalOrchestrator()
+        result = system.market_twin.estimate("NVDA")
+        self.assertEqual(result["status"], "insufficient_data")
+        self.assertNotIn("fair_value", result)
+
+    def test_market_twin_produces_evidence_bound_range(self):
+        system = CapitalOrchestrator()
+        for price in (100, 102, 101, 103):
+            system.market_twin.observe("NVDA", price)
+        system.market_graph.connect("NVDA", "QQQ", "constituent_of", 0.8)
+        result = system.market_twin.estimate("NVDA", 0.75)
+        self.assertEqual(result["status"], "estimated")
+        self.assertEqual(result["observation_count"], 4)
+        self.assertEqual(len(result["evidence_refs"]), 4)
+        self.assertLess(result["fair_value_range"][0], result["fair_value_range"][1])
+
+    def test_strategy_genome_versions_are_immutable(self):
+        system = CapitalOrchestrator()
+        first = system.store.latest_strategy_version("after-hours-event-rotation")
+        updated = system.strategies.publish({**first, "hypothesis": "Revised hypothesis"})
+        versions = [x for x in system.strategies.list() if x["strategy_id"] == first["strategy_id"]]
+        self.assertEqual(updated["version"], 2)
+        self.assertEqual(len(versions), 2)
+        self.assertNotEqual(versions[0]["hypothesis"], versions[1]["hypothesis"])
+
+    def test_run_pins_market_twin_evidence(self):
+        system = CapitalOrchestrator()
+        observations = [{"symbol": "NVDA", "price": price} for price in (100, 101, 102)]
+        run = system.create_run({"title": "Evidence-backed event", "symbols": ["NVDA"], "observations": observations})
+        self.assertEqual(run.proposals[0]["market_twin"]["status"], "estimated")
+        self.assertTrue(any(entry.entry_type == "market_twin" for entry in system.ledger.entries))
+
 
 if __name__ == "__main__":
     unittest.main()

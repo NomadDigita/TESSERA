@@ -89,4 +89,15 @@ Operational endpoints:
 - `GET /api/ready` — database and ledger readiness
 - `GET /metrics` — Prometheus-compatible metrics
 
+Intelligence endpoints:
+
+- `GET|POST /api/strategies` — list or publish immutable Strategy Genome versions
+- `POST /api/market/observations` — record source-attributed market evidence
+- `POST /api/market/relationships` — add a weighted Market Graph edge
+- `GET /api/market-twin/{symbol}` — calculate an evidence-bound fair-value range
+- `GET /api/market-graph/{asset}` — inspect an asset's causal relationships
+
+The Market Twin is deterministic and returns `insufficient_data` instead of
+inventing a forecast when fewer than three observations are available.
+
 See [operations](docs/operations.md) and [security](docs/security.md) for deployment and incident procedures.

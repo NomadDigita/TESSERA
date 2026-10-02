@@ -107,6 +107,12 @@ class Handler(BaseHTTPRequestHandler):
             return self._send({"valid": ORCH.ledger.verify(), "entries": ORCH.ledger.json()})
         if path == "/api/model-calls":
             return self._send({"calls": ORCH.store.list_model_calls()})
+        if path == "/api/strategies":
+            return self._send({"strategies": ORCH.strategies.list()})
+        if path.startswith("/api/market-graph/"):
+            return self._send({"edges": ORCH.market_graph.neighbors(path.rsplit("/", 1)[-1])})
+        if path.startswith("/api/market-twin/"):
+            return self._send(ORCH.market_twin.estimate(path.rsplit("/", 1)[-1]))
         if path == "/api/runs":
             return self._send({"runs": [run.json() for run in ORCH.runs.values()]})
         if path.startswith("/api/runs/"):
@@ -132,6 +138,18 @@ class Handler(BaseHTTPRequestHandler):
                 if not self._principal("researcher"):
                     return
                 return self._send(ORCH.replay(data["run_id"]).json(), 201)
+            if path == "/api/market/observations":
+                if not self._principal("researcher"):
+                    return
+                return self._send(ORCH.market_twin.observe(**data), 201)
+            if path == "/api/market/relationships":
+                if not self._principal("researcher"):
+                    return
+                return self._send(ORCH.market_graph.connect(**data), 201)
+            if path == "/api/strategies":
+                if not self._principal("researcher"):
+                    return
+                return self._send(ORCH.strategies.publish(data), 201)
             if path == "/api/risk/kill-switch":
                 principal = self._principal("operator")
                 if not principal:
