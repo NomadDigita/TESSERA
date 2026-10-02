@@ -32,6 +32,11 @@ class Settings:
     bitget_api_secret: str = ""
     bitget_api_passphrase: str = ""
     bitget_base_url: str = "https://api.bitget.com"
+    auth_enabled: bool = False
+    session_secret: str = ""
+    session_ttl_seconds: int = 28800
+    admin_username: str = "admin"
+    admin_password: str = ""
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -54,6 +59,11 @@ class Settings:
             bitget_api_secret=os.getenv("BITGET_API_SECRET", ""),
             bitget_api_passphrase=os.getenv("BITGET_API_PASSPHRASE", ""),
             bitget_base_url=os.getenv("BITGET_BASE_URL", "https://api.bitget.com"),
+            auth_enabled=_bool("TESSERA_AUTH_ENABLED", False),
+            session_secret=os.getenv("TESSERA_SESSION_SECRET", ""),
+            session_ttl_seconds=int(os.getenv("TESSERA_SESSION_TTL_SECONDS", "28800")),
+            admin_username=os.getenv("TESSERA_ADMIN_USERNAME", "admin"),
+            admin_password=os.getenv("TESSERA_ADMIN_PASSWORD", ""),
         )
         settings.validate()
         return settings
@@ -77,6 +87,12 @@ class Settings:
             raise ValueError("TESSERA_LLM_PROVIDER must be deterministic or qwen")
         if self.llm_provider == "qwen" and not self.dashscope_api_key:
             raise ValueError("DASHSCOPE_API_KEY is required when TESSERA_LLM_PROVIDER=qwen")
+        if self.environment == "production" and not self.auth_enabled:
+            raise ValueError("Authentication must be enabled in production")
+        if self.auth_enabled and len(self.session_secret) < 32:
+            raise ValueError("TESSERA_SESSION_SECRET must contain at least 32 characters")
+        if self.session_ttl_seconds < 300 or self.session_ttl_seconds > 86400:
+            raise ValueError("Session TTL must be between 5 minutes and 24 hours")
 
     def prepare_runtime(self) -> None:
         if self.database_path != ":memory:":

@@ -116,6 +116,16 @@ class TesseraTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             Settings(broker_mode="bitget-demo", bitget_api_key="only-key").validate()
 
+    def test_production_requires_authentication(self):
+        from tessera.config import Settings
+        with self.assertRaises(ValueError):
+            Settings(environment="production", auth_enabled=False).validate()
+
+    def test_authentication_requires_strong_signing_secret(self):
+        from tessera.config import Settings
+        with self.assertRaises(ValueError):
+            Settings(auth_enabled=True, session_secret="too-short").validate()
+
 
 if __name__ == "__main__":
     unittest.main()

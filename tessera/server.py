@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
+from .auth import AuthError, AuthManager
 from .config import Settings
 from .domain import DomainError
 from .services import CapitalOrchestrator
@@ -10,7 +11,13 @@ from .storage import SQLiteStore
 
 SETTINGS = Settings.from_env()
 SETTINGS.prepare_runtime()
-ORCH = CapitalOrchestrator(SQLiteStore(SETTINGS.database_path), SETTINGS)
+STORE = SQLiteStore(SETTINGS.database_path)
+ORCH = CapitalOrchestrator(STORE, SETTINGS)
+AUTH = AuthManager(STORE, SETTINGS.session_secret, SETTINGS.session_ttl_seconds) if SETTINGS.auth_enabled else None
+if AUTH and STORE.count_users() == 0:
+    if not SETTINGS.admin_password:
+        raise RuntimeError("TESSERA_ADMIN_PASSWORD is required to bootstrap the first administrator")
+    AUTH.create_user(SETTINGS.admin_username, SETTINGS.admin_password, "admin")
 
 HTML = r'''<!doctype html><html><head><meta charset="utf-8"><title>TESSERA</title>
 <style>body{margin:0;background:#09111f;color:#e6edf7;font:15px system-ui}main{max-width:1180px;margin:auto;padding:28px}.top{display:flex;justify-content:space-between;align-items:center}.mark{color:#74e1c1;font-size:28px;font-weight:800;letter-spacing:4px}.muted{color:#8fa3bd}.grid{display:grid;grid-template-columns:1.2fr .8fr;gap:18px;margin-top:22px}.card{background:#111e32;border:1px solid #263a55;border-radius:14px;padding:18px}.metric{font-size:30px;font-weight:700;margin:4px 0 12px}.pill{display:inline-block;padding:5px 9px;border-radius:20px;background:#183d45;color:#74e1c1;font-size:12px}.row{display:flex;justify-content:space-between;padding:12px 0;border-bottom:1px solid #21314a}.btn{background:#74e1c1;color:#06131b;border:0;border-radius:8px;padding:10px 14px;font-weight:700;cursor:pointer}.btn.alt{background:#263a55;color:#e6edf7}.bar{height:8px;background:#253b55;border-radius:6px;overflow:hidden}.fill{height:100%;background:#74e1c1}.small{font-size:12px}.mono{font-family:ui-monospace,monospace}.danger{color:#ff9e9e}pre{white-space:pre-wrap;max-height:270px;overflow:auto;color:#b9c9dc}</style></head>
@@ -36,10 +43,27 @@ class Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", "0"))
         return json.loads(self.rfile.read(length) or b"{}")
 
+    def _principal(self, minimum_role: str = "viewer"):
+        if not AUTH:
+            return {"username": "local-dev", "role": "admin"}
+        header = self.headers.get("Authorization", "")
+        if not header.startswith("Bearer "):
+            self._send({"error": "Bearer token required"}, 401)
+            return None
+        try:
+            principal = AUTH.verify(header[7:])
+            AUTH.require(principal, minimum_role)
+            return principal
+        except AuthError as exc:
+            status = 403 if str(exc) == "Insufficient permissions" else 401
+            self._send({"error": str(exc)}, status)
+            return None
+
     def do_GET(self):
         path = urlparse(self.path).path
         if path == "/": return self._send(HTML, content_type="text/html; charset=utf-8")
         if path == "/api/health": return self._send(ORCH.health())
+        if not self._principal("viewer"): return
         if path == "/api/portfolio": return self._send(ORCH.broker.snapshot())
         if path == "/api/ledger": return self._send({"valid": ORCH.ledger.verify(), "entries": ORCH.ledger.json()})
         if path == "/api/model-calls": return self._send({"calls": ORCH.store.list_model_calls()})
@@ -54,10 +78,21 @@ class Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         try:
             data = self._body()
-            if path == "/api/runs": return self._send(ORCH.create_run(data, idempotency_key=self.headers.get("Idempotency-Key")).json(), 201)
-            if path == "/api/replay": return self._send(ORCH.replay(data["run_id"]).json(), 201)
-            if path == "/api/risk/kill-switch": return self._send(ORCH.set_kill_switch(bool(data.get("enabled")), bool(data.get("liquidate"))).copy())
+            if path == "/api/auth/login":
+                if not AUTH: return self._send({"error": "Authentication is disabled"}, 404)
+                return self._send(AUTH.login(str(data.get("username", "")), str(data.get("password", ""))))
+            if path == "/api/runs":
+                if not self._principal("researcher"): return
+                return self._send(ORCH.create_run(data, idempotency_key=self.headers.get("Idempotency-Key")).json(), 201)
+            if path == "/api/replay":
+                if not self._principal("researcher"): return
+                return self._send(ORCH.replay(data["run_id"]).json(), 201)
+            if path == "/api/risk/kill-switch":
+                principal = self._principal("operator")
+                if not principal: return
+                return self._send(ORCH.set_kill_switch(bool(data.get("enabled")), bool(data.get("liquidate")), actor=principal["username"]).copy())
             if path.startswith("/api/runs/"):
+                if not self._principal("operator"): return
                 pieces = path.split("/")
                 run_id, action = pieces[3], pieces[4]
                 if action == "approve": return self._send(ORCH.approve(run_id).json())
@@ -66,6 +101,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send({"error": "unknown action"}, 404)
         except DomainError as exc:
             return self._send({"error": str(exc)}, 409)
+        except AuthError as exc:
+            return self._send({"error": str(exc)}, 401)
         except (KeyError, ValueError, json.JSONDecodeError, IndexError) as exc:
             return self._send({"error": str(exc)}, 400)
         return self._send({"error": "not found"}, 404)

@@ -64,6 +64,13 @@ class SQLiteStore:
                     latency_ms REAL NOT NULL,
                     validation_status TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS users (
+                    username TEXT PRIMARY KEY,
+                    password_hash TEXT NOT NULL,
+                    role TEXT NOT NULL,
+                    active INTEGER NOT NULL DEFAULT 1,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
                 """
             )
 
@@ -160,6 +167,26 @@ class SQLiteStore:
                 "SELECT * FROM model_calls ORDER BY call_id DESC LIMIT ?", (limit,)
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def create_user(self, user: dict) -> None:
+        with self._lock, self._db:
+            self._db.execute(
+                "INSERT INTO users(username,password_hash,role,active) VALUES(?,?,?,?)",
+                (user["username"], user["password_hash"], user["role"], 1 if user.get("active", True) else 0),
+            )
+
+    def get_user(self, username: str) -> dict | None:
+        with self._lock:
+            row = self._db.execute("SELECT * FROM users WHERE username=?", (username,)).fetchone()
+        if not row:
+            return None
+        user = dict(row)
+        user["active"] = bool(user["active"])
+        return user
+
+    def count_users(self) -> int:
+        with self._lock:
+            return int(self._db.execute("SELECT COUNT(*) FROM users").fetchone()[0])
 
     def close(self) -> None:
         self._db.close()
