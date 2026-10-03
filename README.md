@@ -154,8 +154,10 @@ service is required. Supabase Storage is S3-compatible and can be used for
 replay artifacts.
 
 Set `TESSERA_ENV=serverless`, keep authentication enabled, provide the
-Supabase PostgreSQL URL, Supabase Storage S3 credentials, `CRON_SECRET`, and
-the model credentials. The broker remains `mock-paper` until Bitget Demo
+Supabase PostgreSQL URL and `CRON_SECRET`. If Supabase Storage S3 credentials
+are present, replay bundles use the private `tessera-artifacts` bucket;
+otherwise the serverless demo uses ephemeral local artifacts until storage
+credentials are added. The broker remains `mock-paper` until Bitget Demo
 smoke tests pass. Vercel Function limits mean each cron invocation processes a
 bounded job; the job lease/retry state remains in PostgreSQL.
 

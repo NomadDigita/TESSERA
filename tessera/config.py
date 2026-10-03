@@ -151,7 +151,7 @@ class Settings:
             raise ValueError("DATABASE_URL is required in hosted environments")
         if self.environment == "production" and not self.redis_url:
             raise ValueError("REDIS_URL is required in production")
-        if self.environment in {"production", "serverless"} and not all((self.object_storage_endpoint,
+        if self.environment == "production" and not all((self.object_storage_endpoint,
                                                            self.object_storage_bucket,
                                                            self.object_storage_access_key,
                                                            self.object_storage_secret_key)):
