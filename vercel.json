@@ -9,6 +9,6 @@
     { "source": "/", "destination": "/tessera/web/index.html" }
   ],
   "crons": [
-    { "path": "/api/cron/worker", "schedule": "* * * * *" }
+    { "path": "/api/cron/worker", "schedule": "0 0 * * *" }
   ]
 }
