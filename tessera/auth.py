@@ -13,6 +13,7 @@ class AuthError(RuntimeError):
 
 
 ROLE_LEVEL = {"viewer": 10, "researcher": 20, "operator": 30, "admin": 40, "system_agent": 50}
+USER_ROLES = {"viewer", "researcher", "operator", "admin"}
 
 
 def _b64(data: bytes) -> str:
@@ -53,8 +54,10 @@ class AuthManager:
 
     def create_user(self, username: str, password: str, role: str) -> dict:
         username = username.strip().lower()
-        if not username or role not in ROLE_LEVEL:
+        if not username or role not in USER_ROLES:
             raise ValueError("Valid username and role are required")
+        if self.store.get_user(username):
+            raise ValueError("User already exists")
         user = {"username": username, "password_hash": hash_password(password), "role": role, "active": True}
         self.store.create_user(user)
         return {"username": username, "role": role, "active": True}
@@ -65,6 +68,8 @@ class AuthManager:
             raise AuthError("Invalid credentials")
         now = int(self.clock())
         payload = {"sub": user["username"], "role": user["role"], "iat": now, "exp": now + self.ttl_seconds, "jti": secrets.token_hex(12)}
+        self.store.create_session({"jti": payload["jti"], "username": user["username"],
+                                   "issued_at": now, "expires_at": payload["exp"]})
         encoded = _b64(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode())
         signature = _b64(hmac.new(self.secret, encoded.encode(), hashlib.sha256).digest())
         return {"access_token": f"{encoded}.{signature}", "token_type": "bearer", "expires_in": self.ttl_seconds, "role": user["role"]}
@@ -80,10 +85,36 @@ class AuthManager:
             raise AuthError("Malformed token") from exc
         if int(payload.get("exp", 0)) <= int(self.clock()):
             raise AuthError("Token expired")
+        session = self.store.get_session(str(payload.get("jti", "")))
+        if not session or session.get("revoked_at") is not None:
+            raise AuthError("Session is revoked")
         user = self.store.get_user(str(payload.get("sub", "")))
         if not user or not user["active"] or user["role"] != payload.get("role"):
             raise AuthError("User is inactive or permissions changed")
-        return {"username": user["username"], "role": user["role"]}
+        return {"username": user["username"], "role": user["role"], "jti": payload["jti"],
+                "expires_at": int(payload["exp"])}
+
+    def logout(self, token: str) -> None:
+        principal = self.verify(token)
+        self.store.revoke_session(principal["jti"], int(self.clock()))
+
+    def sessions(self, username: str) -> list[dict]:
+        return self.store.list_active_sessions(username, int(self.clock()))
+
+    def update_user(self, username: str, *, role: str | None = None,
+                    active: bool | None = None) -> dict:
+        username = username.strip().lower()
+        user = self.store.get_user(username)
+        if not user:
+            raise ValueError("User not found")
+        if role is not None and role not in USER_ROLES:
+            raise ValueError("Invalid role")
+        removes_admin = user["role"] == "admin" and (role not in {None, "admin"} or active is False)
+        if removes_admin and self.store.active_admin_count() <= 1:
+            raise ValueError("Cannot remove the last active administrator")
+        updated = self.store.update_user(username, role=role, active=active)
+        self.store.revoke_user_sessions(username, int(self.clock()))
+        return {"username": updated["username"], "role": updated["role"], "active": updated["active"]}
 
     @staticmethod
     def require(principal: dict, minimum_role: str) -> None:

@@ -1,5 +1,15 @@
 # Security Model
 
+## Sessions and abuse controls
+
+- Tokens are HMAC-signed, expiring, and backed by revocable database sessions.
+- Deactivation or role changes revoke all sessions immediately.
+- Redis applies fixed-window limits consistently across API replicas; local mode
+  uses an in-process limiter with the same contract.
+- Login keys combine source address with a hash of the submitted username, avoiding
+  plaintext identity data in Redis keys.
+- Administrative identity changes require `admin` and enter the Causal Ledger.
+
 ## Trust boundaries
 
 - News and user event text are untrusted data and are bounded before model use.

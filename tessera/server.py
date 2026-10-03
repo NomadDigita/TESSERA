@@ -6,6 +6,7 @@ from pathlib import Path
 from time import perf_counter
 from urllib.parse import urlparse
 import uuid
+import hashlib
 
 from .auth import AuthError, AuthManager
 from .config import Settings
@@ -14,6 +15,7 @@ from .services import CapitalOrchestrator
 from .storage import create_store
 from .events import create_event_bus
 from .observability import LOGGER, METRICS
+from .rate_limit import create_rate_limiter
 
 
 SETTINGS = Settings.from_env()
@@ -22,6 +24,7 @@ STORE = create_store(SETTINGS.database_url, SETTINGS.database_path)
 EVENT_BUS = create_event_bus(SETTINGS.redis_url, "api")
 ORCH = CapitalOrchestrator(STORE, SETTINGS, event_bus=EVENT_BUS)
 AUTH = AuthManager(STORE, SETTINGS.session_secret, SETTINGS.session_ttl_seconds) if SETTINGS.auth_enabled else None
+RATE_LIMITER = create_rate_limiter(SETTINGS.redis_url)
 if AUTH and STORE.count_users() == 0:
     if not SETTINGS.admin_password:
         raise RuntimeError("TESSERA_ADMIN_PASSWORD is required to bootstrap the first administrator")
@@ -38,7 +41,8 @@ STATIC_ROUTES = {
 class Handler(BaseHTTPRequestHandler):
     server_version = "TESSERA"
 
-    def _send(self, payload, status: int = 200, content_type: str = "application/json") -> None:
+    def _send(self, payload, status: int = 200, content_type: str = "application/json",
+              headers: dict[str, str] | None = None) -> None:
         body = payload if isinstance(payload, bytes) else (payload.encode() if isinstance(payload, str) else json.dumps(payload).encode())
         self.send_response(status)
         self.send_header("Content-Type", content_type)
@@ -50,6 +54,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
         self.send_header("Content-Security-Policy", "default-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'")
+        for key, value in (headers or {}).items():
+            self.send_header(key, value)
         self.end_headers()
         self.wfile.write(body)
         path = urlparse(self.path).path
@@ -71,16 +77,31 @@ class Handler(BaseHTTPRequestHandler):
             raise ValueError("Request body exceeds 1 MB")
         return json.loads(self.rfile.read(length) or b"{}")
 
+    def _limit(self, key: str, limit: int) -> bool:
+        result = RATE_LIMITER.consume(key, limit, 60)
+        if result.allowed:
+            return True
+        METRICS.inc("rate_limit_rejections_total", labels={"scope": key.split(":", 1)[0]})
+        self._send({"error": "Rate limit exceeded", "retry_after": result.retry_after}, 429,
+                   headers={"Retry-After": str(result.retry_after), "X-RateLimit-Remaining": "0"})
+        return False
+
+    def _token(self) -> str | None:
+        header = self.headers.get("Authorization", "")
+        return header[7:] if header.startswith("Bearer ") else None
+
     def _principal(self, minimum_role: str = "viewer") -> dict | None:
         if not AUTH:
             return {"username": "local-dev", "role": "admin"}
-        header = self.headers.get("Authorization", "")
-        if not header.startswith("Bearer "):
+        token = self._token()
+        if not token:
             self._send({"error": "Bearer token required"}, 401)
             return None
         try:
-            principal = AUTH.verify(header[7:])
+            principal = AUTH.verify(token)
             AUTH.require(principal, minimum_role)
+            if not self._limit(f"api:{principal['username']}", SETTINGS.api_rate_limit):
+                return None
             return principal
         except AuthError as exc:
             self._send({"error": str(exc)}, 403 if str(exc) == "Insufficient permissions" else 401)
@@ -101,8 +122,17 @@ class Handler(BaseHTTPRequestHandler):
             METRICS.gauge("runs", len(ORCH.runs))
             METRICS.gauge("kill_switch", 1 if ORCH.kill_switch_enabled else 0)
             return self._send(METRICS.render(), content_type="text/plain; version=0.0.4")
-        if not self._principal("viewer"):
+        principal = self._principal("viewer")
+        if not principal:
             return
+        if path == "/api/admin/users":
+            try:
+                AUTH.require(principal, "admin") if AUTH else None
+                return self._send({"users": STORE.list_users()})
+            except AuthError as exc:
+                return self._send({"error": str(exc)}, 403)
+        if path == "/api/auth/sessions":
+            return self._send({"sessions": AUTH.sessions(principal["username"]) if AUTH else []})
         if path == "/api/portfolio":
             return self._send(ORCH.broker.snapshot())
         if path == "/api/ledger":
@@ -145,7 +175,43 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/auth/login":
                 if not AUTH:
                     return self._send({"error": "Authentication is disabled"}, 404)
-                return self._send(AUTH.login(str(data.get("username", "")), str(data.get("password", ""))))
+                username = str(data.get("username", "")).strip().lower()
+                identity = hashlib.sha256(username.encode()).hexdigest()[:16]
+                client_ip = self.client_address[0]
+                if not self._limit(f"login:{client_ip}:{identity}", SETTINGS.login_rate_limit):
+                    return
+                try:
+                    result = AUTH.login(username, str(data.get("password", "")))
+                    METRICS.inc("auth_login_total", labels={"status": "success"})
+                    return self._send(result)
+                except AuthError:
+                    METRICS.inc("auth_login_total", labels={"status": "failure"})
+                    raise
+            if path == "/api/auth/logout":
+                token = self._token()
+                if not AUTH or not token:
+                    return self._send({"error": "Bearer token required"}, 401)
+                AUTH.logout(token)
+                return self._send({"status": "logged_out"})
+            if path == "/api/admin/users":
+                principal = self._principal("admin")
+                if not principal:
+                    return
+                user = AUTH.create_user(str(data.get("username", "")), str(data.get("password", "")),
+                                        str(data.get("role", "viewer")))
+                ORCH.ledger.append("SYSTEM", "identity_change", f"user:{principal['username']}",
+                                   {"action": "create_user", "target": user["username"], "role": user["role"]})
+                return self._send(user, 201)
+            if path.startswith("/api/admin/users/"):
+                principal = self._principal("admin")
+                if not principal:
+                    return
+                username = path.rsplit("/", 1)[-1]
+                user = AUTH.update_user(username, role=data.get("role"), active=data.get("active"))
+                ORCH.ledger.append("SYSTEM", "identity_change", f"user:{principal['username']}",
+                                   {"action": "update_user", "target": user["username"],
+                                    "role": user["role"], "active": user["active"]})
+                return self._send(user)
             if path == "/api/runs":
                 if not self._principal("researcher"):
                     return

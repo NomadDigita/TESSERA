@@ -43,6 +43,8 @@ class Settings:
     auth_enabled: bool = False
     session_secret: str = ""
     session_ttl_seconds: int = 28800
+    login_rate_limit: int = 5
+    api_rate_limit: int = 120
     admin_username: str = "admin"
     admin_password: str = ""
 
@@ -78,6 +80,8 @@ class Settings:
             auth_enabled=_bool("TESSERA_AUTH_ENABLED", False),
             session_secret=os.getenv("TESSERA_SESSION_SECRET", ""),
             session_ttl_seconds=int(os.getenv("TESSERA_SESSION_TTL_SECONDS", "28800")),
+            login_rate_limit=int(os.getenv("TESSERA_LOGIN_RATE_LIMIT", "5")),
+            api_rate_limit=int(os.getenv("TESSERA_API_RATE_LIMIT", "120")),
             admin_username=os.getenv("TESSERA_ADMIN_USERNAME", "admin"),
             admin_password=os.getenv("TESSERA_ADMIN_PASSWORD", ""),
         )
@@ -122,6 +126,8 @@ class Settings:
             raise ValueError("TESSERA_SESSION_SECRET must contain at least 32 characters")
         if self.session_ttl_seconds < 300 or self.session_ttl_seconds > 86400:
             raise ValueError("Session TTL must be between 5 minutes and 24 hours")
+        if self.login_rate_limit < 1 or self.api_rate_limit < 1:
+            raise ValueError("Rate limits must be positive")
 
     def prepare_runtime(self) -> None:
         if self.database_path != ":memory:":

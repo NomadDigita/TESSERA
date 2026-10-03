@@ -138,4 +138,24 @@ Replay evidence is persisted as canonical JSON with a SHA-256 integrity referenc
 Each bundle contains original and replay run snapshots, strategy versions, model-call
 audit records, Constitution version, and the relevant causal-ledger entries.
 
+## Identity and API controls
+
+- Signed sessions have server-side records and can be revoked before expiration.
+- Role or account-status changes revoke every active session for that user.
+- Redis enforces shared login and authenticated API limits across API replicas.
+- The final active administrator cannot be disabled or demoted.
+- Human accounts cannot receive the internal `system_agent` identity.
+- Identity changes are appended to the Causal Ledger.
+
+Administration endpoints:
+
+- `POST /api/auth/logout`
+- `GET /api/auth/sessions`
+- `GET|POST /api/admin/users`
+- `POST /api/admin/users/{username}` to change role or active state
+
+Every model-call record is bound to a run and includes provider, model, prompt
+version, input/output hashes, latency, validation status, token metadata, and retry
+count. Replay bundles select model calls by their pinned run IDs.
+
 See [operations](docs/operations.md) and [security](docs/security.md) for deployment and incident procedures.

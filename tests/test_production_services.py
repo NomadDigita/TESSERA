@@ -8,6 +8,7 @@ from tessera.services import CapitalOrchestrator
 from tessera.storage import PostgreSQLStore
 from tessera.worker import Worker
 from tessera.artifacts import S3ArtifactStore
+from tessera.rate_limit import RedisRateLimiter
 
 
 @unittest.skipUnless(os.getenv("TESSERA_INTEGRATION_TESTS") == "1", "production services not configured")
@@ -45,6 +46,15 @@ class ProductionServicesTests(unittest.TestCase):
         reference = store.put_json(f"integration/{uuid.uuid4().hex}.json", payload)
         self.assertEqual(store.get_json(reference["key"]), payload)
         self.assertEqual(len(reference["sha256"]), 64)
+
+    def test_redis_rate_limit_is_shared(self):
+        key = f"integration:{uuid.uuid4().hex}"
+        first = RedisRateLimiter(os.environ["REDIS_URL"])
+        second = RedisRateLimiter(os.environ["REDIS_URL"])
+        self.assertTrue(first.consume(key, 1, 60).allowed)
+        denied = second.consume(key, 1, 60)
+        self.assertFalse(denied.allowed)
+        self.assertGreater(denied.retry_after, 0)
 
 
 if __name__ == "__main__":

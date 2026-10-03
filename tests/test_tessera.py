@@ -97,6 +97,8 @@ class TesseraTests(unittest.TestCase):
         self.assertEqual(len(run.agents), 7)
         self.assertTrue(all({"decision", "confidence", "finding", "evidence", "risks"}.issubset(x) for x in run.agents))
         self.assertEqual(len(system.store.list_model_calls()), 7)
+        self.assertTrue(all(call["run_id"] == run.run_id for call in system.store.list_model_calls()))
+        self.assertTrue(all(call["output_hash"] for call in system.store.list_model_calls()))
         self.assertEqual(run.parliament["proposed_orders"][0]["symbol"], "QQQ")
 
     def test_untrusted_event_text_is_sanitized_and_bounded(self):

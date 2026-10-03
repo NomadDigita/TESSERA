@@ -73,6 +73,15 @@ class SQLiteStore:
                     active INTEGER NOT NULL DEFAULT 1,
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
+                CREATE TABLE IF NOT EXISTS auth_sessions (
+                    jti TEXT PRIMARY KEY,
+                    username TEXT NOT NULL,
+                    issued_at INTEGER NOT NULL,
+                    expires_at INTEGER NOT NULL,
+                    revoked_at INTEGER,
+                    FOREIGN KEY(username) REFERENCES users(username)
+                );
+                CREATE INDEX IF NOT EXISTS idx_auth_sessions_user ON auth_sessions(username, expires_at);
                 CREATE TABLE IF NOT EXISTS market_observations (
                     observation_id TEXT PRIMARY KEY,
                     symbol TEXT NOT NULL,
@@ -122,6 +131,21 @@ class SQLiteStore:
                 );
                 """
             )
+            self._ensure_model_call_columns()
+
+    def _ensure_model_call_columns(self) -> None:
+        columns = {
+            "run_id": "TEXT NOT NULL DEFAULT 'UNSCOPED'",
+            "prompt_version": "TEXT NOT NULL DEFAULT 'agent-v1'",
+            "output_hash": "TEXT NOT NULL DEFAULT ''",
+            "token_usage": "TEXT NOT NULL DEFAULT '{}'",
+            "retry_count": "INTEGER NOT NULL DEFAULT 0",
+        }
+        for name, definition in columns.items():
+            try:
+                self._db.execute(f"ALTER TABLE model_calls ADD COLUMN {name} {definition}")
+            except Exception:
+                self._db.rollback()
 
     def save_run(self, run: Run) -> None:
         payload = json.dumps(run.json(), sort_keys=True, separators=(",", ":"))
@@ -219,18 +243,28 @@ class SQLiteStore:
     def record_model_call(self, call: dict) -> None:
         with self._lock, self._db:
             self._db.execute(
-                """INSERT INTO model_calls(provider,model,agent,input_hash,latency_ms,validation_status)
-                   VALUES(?,?,?,?,?,?)""",
+                """INSERT INTO model_calls(provider,model,agent,input_hash,latency_ms,validation_status,
+                   run_id,prompt_version,output_hash,token_usage,retry_count) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
                 (call["provider"], call["model"], call["agent"], call["input_hash"],
-                 call["latency_ms"], call["validation_status"]),
+                 call["latency_ms"], call["validation_status"], call["run_id"],
+                 call["prompt_version"], call["output_hash"],
+                 json.dumps(call.get("token_usage", {}), sort_keys=True), call.get("retry_count", 0)),
             )
 
-    def list_model_calls(self, limit: int = 100) -> list[dict]:
+    def list_model_calls(self, limit: int = 100, run_id: str | None = None) -> list[dict]:
         with self._lock:
-            rows = self._db.execute(
-                "SELECT * FROM model_calls ORDER BY call_id DESC LIMIT ?", (limit,)
-            ).fetchall()
-        return [dict(row) for row in rows]
+            if run_id:
+                rows = self._db.execute(
+                    "SELECT * FROM model_calls WHERE run_id=? ORDER BY call_id DESC LIMIT ?", (run_id, limit)
+                ).fetchall()
+            else:
+                rows = self._db.execute(
+                    "SELECT * FROM model_calls ORDER BY call_id DESC LIMIT ?", (limit,)
+                ).fetchall()
+        result = [dict(row) for row in rows]
+        for call in result:
+            call["token_usage"] = json.loads(call["token_usage"] or "{}")
+        return result
 
     def create_user(self, user: dict) -> None:
         with self._lock, self._db:
@@ -251,6 +285,68 @@ class SQLiteStore:
     def count_users(self) -> int:
         with self._lock:
             return int(self._db.execute("SELECT COUNT(*) AS count FROM users").fetchone()["count"])
+
+    def list_users(self) -> list[dict]:
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT username,role,active,created_at FROM users ORDER BY username"
+            ).fetchall()
+        return [{**dict(row), "active": bool(row["active"])} for row in rows]
+
+    def update_user(self, username: str, *, role: str | None = None, active: bool | None = None) -> dict | None:
+        user = self.get_user(username)
+        if not user:
+            return None
+        new_role = role if role is not None else user["role"]
+        new_active = active if active is not None else user["active"]
+        with self._lock, self._db:
+            self._db.execute("UPDATE users SET role=?,active=? WHERE username=?",
+                             (new_role, 1 if new_active else 0, username))
+        return self.get_user(username)
+
+    def active_admin_count(self) -> int:
+        with self._lock:
+            row = self._db.execute(
+                "SELECT COUNT(*) AS count FROM users WHERE role='admin' AND active=1"
+            ).fetchone()
+        return int(row["count"])
+
+    def create_session(self, session: dict) -> None:
+        with self._lock, self._db:
+            self._db.execute(
+                "INSERT INTO auth_sessions(jti,username,issued_at,expires_at) VALUES(?,?,?,?)",
+                (session["jti"], session["username"], session["issued_at"], session["expires_at"]),
+            )
+
+    def get_session(self, jti: str) -> dict | None:
+        with self._lock:
+            row = self._db.execute("SELECT * FROM auth_sessions WHERE jti=?", (jti,)).fetchone()
+        return dict(row) if row else None
+
+    def revoke_session(self, jti: str, revoked_at: int) -> bool:
+        with self._lock, self._db:
+            cursor = self._db.execute(
+                "UPDATE auth_sessions SET revoked_at=? WHERE jti=? AND revoked_at IS NULL",
+                (revoked_at, jti),
+            )
+        return cursor.rowcount > 0
+
+    def revoke_user_sessions(self, username: str, revoked_at: int) -> int:
+        with self._lock, self._db:
+            cursor = self._db.execute(
+                "UPDATE auth_sessions SET revoked_at=? WHERE username=? AND revoked_at IS NULL",
+                (revoked_at, username),
+            )
+        return cursor.rowcount
+
+    def list_active_sessions(self, username: str, current_time: int) -> list[dict]:
+        with self._lock:
+            rows = self._db.execute(
+                """SELECT jti,username,issued_at,expires_at FROM auth_sessions
+                   WHERE username=? AND revoked_at IS NULL AND expires_at>? ORDER BY issued_at DESC""",
+                (username, current_time),
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def save_market_observation(self, observation: dict) -> None:
         with self._lock, self._db:

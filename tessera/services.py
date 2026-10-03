@@ -206,7 +206,7 @@ class CapitalOrchestrator:
             self.ledger.append(run_id, "observation", "market_twin", recorded)
         twin = self.market_twin.estimate(event["symbols"][0], event["severity"])
         self.ledger.append(run_id, "market_twin", "market_twin", twin)
-        run.agents = self.agents.run(event)
+        run.agents = self.agents.run(event, run_id)
         for output in run.agents:
             self.ledger.append(run_id, "agent_output", f"agent:{output['agent']}", output)
         parliament = self.parliament.deliberate(run.agents, event)
@@ -302,7 +302,8 @@ class CapitalOrchestrator:
             "created_at": now(), "original_run": original.json(), "replay_run": replay_run.json(),
             "strategy_versions": self.strategies.list(),
             "constitution_version": self.risk.version,
-            "model_calls": self.store.list_model_calls(limit=1000),
+            "model_calls": (self.store.list_model_calls(limit=1000, run_id=original.run_id) +
+                            self.store.list_model_calls(limit=1000, run_id=replay_run.run_id)),
             "ledger_entries": [entry for entry in self.ledger.json()
                                if entry["run_id"] in {original.run_id, replay_run.run_id}],
         }
