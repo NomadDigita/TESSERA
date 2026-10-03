@@ -63,19 +63,27 @@ class Settings:
 
     @classmethod
     def from_env(cls) -> "Settings":
+        environment = os.getenv("TESSERA_ENV", "development")
+        serverless = environment == "serverless"
         settings = cls(
             host=os.getenv("TESSERA_HOST", "127.0.0.1"),
             port=int(os.getenv("TESSERA_PORT", "8787")),
-            database_path=os.getenv("TESSERA_DATABASE_PATH", "data/tessera.db"),
+            database_path=os.getenv(
+                "TESSERA_DATABASE_PATH",
+                "/tmp/tessera.db" if serverless else "data/tessera.db",
+            ),
             database_url=os.getenv("DATABASE_URL", ""),
             redis_url=os.getenv("REDIS_URL", ""),
-            artifact_path=os.getenv("TESSERA_ARTIFACT_PATH", "data/artifacts"),
+            artifact_path=os.getenv(
+                "TESSERA_ARTIFACT_PATH",
+                "/tmp/tessera-artifacts" if serverless else "data/artifacts",
+            ),
             object_storage_endpoint=os.getenv("OBJECT_STORAGE_ENDPOINT", ""),
             object_storage_bucket=os.getenv("OBJECT_STORAGE_BUCKET", ""),
             object_storage_access_key=os.getenv("OBJECT_STORAGE_ACCESS_KEY", ""),
             object_storage_secret_key=os.getenv("OBJECT_STORAGE_SECRET_KEY", ""),
             object_storage_region=os.getenv("OBJECT_STORAGE_REGION", "us-east-1"),
-            environment=os.getenv("TESSERA_ENV", "development"),
+            environment=environment,
             broker_mode=os.getenv("TESSERA_BROKER_MODE", "mock-paper"),
             live_trading_enabled=_bool("TESSERA_LIVE_TRADING_ENABLED", False),
             require_human_approval=_bool("TESSERA_REQUIRE_HUMAN_APPROVAL", True),
