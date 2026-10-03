@@ -9,6 +9,11 @@ from datetime import datetime, timedelta, timezone
 from .domain import LedgerEntry, Run
 
 
+def _decode_json(value):
+    """Decode SQLite text and PostgreSQL JSON/JSONB values uniformly."""
+    return value if isinstance(value, (dict, list)) else json.loads(value)
+
+
 class SQLiteStore:
     """Durable system of record. Methods are intentionally small and transactional."""
 
@@ -163,7 +168,7 @@ class SQLiteStore:
             rows = self._db.execute("SELECT payload FROM runs ORDER BY created_at").fetchall()
         runs: dict[str, Run] = {}
         for row in rows:
-            data = json.loads(row["payload"])
+            data = _decode_json(row["payload"])
             run = Run(**data)
             runs[run.run_id] = run
         return runs
@@ -207,7 +212,7 @@ class SQLiteStore:
         return [
             LedgerEntry(
                 entry_id=row["entry_id"], run_id=row["run_id"], entry_type=row["entry_type"],
-                actor=row["actor"], payload=json.loads(row["payload"]), created_at=row["created_at"],
+                actor=row["actor"], payload=_decode_json(row["payload"]), created_at=row["created_at"],
                 payload_hash=row["payload_hash"], previous_hash=row["previous_hash"], entry_hash=row["entry_hash"],
             )
             for row in rows
@@ -362,7 +367,7 @@ class SQLiteStore:
                 "SELECT payload FROM market_observations WHERE symbol=? ORDER BY observed_at DESC LIMIT ?",
                 (symbol, limit),
             ).fetchall()
-        return [json.loads(row["payload"]) for row in rows]
+        return [_decode_json(row["payload"]) for row in rows]
 
     def save_market_edge(self, edge: dict) -> None:
         with self._lock, self._db:
@@ -378,7 +383,7 @@ class SQLiteStore:
                 "SELECT payload FROM market_edges WHERE source=? OR target=? ORDER BY relation, edge_id",
                 (asset, asset),
             ).fetchall()
-        return [json.loads(row["payload"]) for row in rows]
+        return [_decode_json(row["payload"]) for row in rows]
 
     def save_strategy_version(self, strategy: dict) -> None:
         with self._lock, self._db:
@@ -394,14 +399,14 @@ class SQLiteStore:
                 "SELECT payload FROM strategy_versions WHERE strategy_id=? ORDER BY version DESC LIMIT 1",
                 (strategy_id,),
             ).fetchone()
-        return json.loads(row["payload"]) if row else None
+        return _decode_json(row["payload"]) if row else None
 
     def list_strategy_versions(self) -> list[dict]:
         with self._lock:
             rows = self._db.execute(
                 "SELECT payload FROM strategy_versions ORDER BY created_at DESC, version DESC"
             ).fetchall()
-        return [json.loads(row["payload"]) for row in rows]
+        return [_decode_json(row["payload"]) for row in rows]
 
     def enqueue_job(self, job: dict) -> None:
         with self._lock, self._db:
