@@ -113,7 +113,7 @@ class Run:
         allowed = {
             "RUNNING": {"AWAITING_APPROVAL", "APPROVED", "REJECTED", "CANCELLED", "FAILED"},
             "AWAITING_APPROVAL": {"EXECUTING", "REJECTED", "CANCELLED"},
-            "APPROVED": {"EXECUTING", "CANCELLED"},
+            "APPROVED": {"EXECUTING", "REJECTED", "CANCELLED"},
             "EXECUTING": {"SUBMITTED", "EXECUTED", "FAILED"},
             "SUBMITTED": {"EXECUTED", "FAILED", "CANCELLED"},
             "EXECUTED": {"LIQUIDATED"},

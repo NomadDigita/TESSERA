@@ -32,6 +32,14 @@ class Settings:
     max_order_notional: float = 1500.0
     max_gross_exposure: float = 5000.0
     max_single_asset_exposure: float = 2500.0
+    max_sector_exposure: float = 3500.0
+    max_daily_loss: float = 500.0
+    max_drawdown_pct: float = 0.10
+    max_spread_bps: float = 40.0
+    max_slippage_bps: float = 30.0
+    max_data_age_seconds: int = 120
+    min_decision_confidence: float = 0.55
+    max_leverage: float = 1.0
     llm_provider: str = "deterministic"
     qwen_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     qwen_model: str = "qwen-plus"
@@ -69,6 +77,14 @@ class Settings:
             max_order_notional=float(os.getenv("TESSERA_MAX_ORDER_NOTIONAL", "1500")),
             max_gross_exposure=float(os.getenv("TESSERA_MAX_GROSS_EXPOSURE", "5000")),
             max_single_asset_exposure=float(os.getenv("TESSERA_MAX_SINGLE_ASSET_EXPOSURE", "2500")),
+            max_sector_exposure=float(os.getenv("TESSERA_MAX_SECTOR_EXPOSURE", "3500")),
+            max_daily_loss=float(os.getenv("TESSERA_MAX_DAILY_LOSS", "500")),
+            max_drawdown_pct=float(os.getenv("TESSERA_MAX_DRAWDOWN_PCT", "0.10")),
+            max_spread_bps=float(os.getenv("TESSERA_MAX_SPREAD_BPS", "40")),
+            max_slippage_bps=float(os.getenv("TESSERA_MAX_SLIPPAGE_BPS", "30")),
+            max_data_age_seconds=int(os.getenv("TESSERA_MAX_DATA_AGE_SECONDS", "120")),
+            min_decision_confidence=float(os.getenv("TESSERA_MIN_DECISION_CONFIDENCE", "0.55")),
+            max_leverage=float(os.getenv("TESSERA_MAX_LEVERAGE", "1.0")),
             llm_provider=os.getenv("TESSERA_LLM_PROVIDER", "deterministic"),
             qwen_base_url=os.getenv("QWEN_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
             qwen_model=os.getenv("QWEN_MODEL", "qwen-plus"),
@@ -95,6 +111,11 @@ class Settings:
             raise ValueError("TESSERA_MAX_ORDER_NOTIONAL must be positive")
         if self.max_gross_exposure <= 0 or self.max_single_asset_exposure <= 0:
             raise ValueError("Exposure limits must be positive")
+        if min(self.max_sector_exposure, self.max_daily_loss, self.max_spread_bps,
+               self.max_slippage_bps, self.max_data_age_seconds, self.max_leverage) <= 0:
+            raise ValueError("Risk limits must be positive")
+        if not 0 < self.max_drawdown_pct < 1 or not 0 <= self.min_decision_confidence <= 1:
+            raise ValueError("Drawdown and confidence limits are invalid")
         if self.broker_mode not in {"mock-paper", "bitget-demo"}:
             raise ValueError("TESSERA_BROKER_MODE must be mock-paper or bitget-demo")
         if self.broker_mode == "bitget-demo" and not all((self.bitget_api_key, self.bitget_api_secret, self.bitget_api_passphrase)):

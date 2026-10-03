@@ -21,6 +21,32 @@ class TesseraTests(unittest.TestCase):
         self.assertEqual(risk["decision"], "deny")
         self.assertTrue(any(v["rule"] == "MAX_ORDER_NOTIONAL" for v in risk["violations"]))
 
+    def test_risk_constitution_vetoes_stale_market_data(self):
+        risk = RiskConstitution(max_data_age_seconds=30).evaluate(
+            {"confidence": 0.9, "proposed_orders": [{"symbol": "NVDA", "quantity": 1, "reference_price": 150}]},
+            {"cash": 10000, "equity": 10000, "mode": "mock-paper"},
+            {"market_quality": {"NVDA": {"age_seconds": 31}}},
+        )
+        self.assertEqual(risk["decision"], "deny")
+        self.assertTrue(any(v["rule"] == "MAX_DATA_AGE" for v in risk["violations"]))
+
+    def test_risk_constitution_vetoes_sector_concentration(self):
+        risk = RiskConstitution(max_sector_exposure=100).evaluate(
+            {"confidence": 0.9, "proposed_orders": [{"symbol": "NVDA", "quantity": 1, "reference_price": 150, "sector": "Technology"}]},
+            {"cash": 10000, "equity": 10000, "mode": "mock-paper"}, {},
+        )
+        self.assertEqual(risk["decision"], "deny")
+        self.assertTrue(any(v["rule"] == "MAX_SECTOR_EXPOSURE" for v in risk["violations"]))
+
+    def test_approval_rechecks_changed_portfolio_before_execution(self):
+        system = CapitalOrchestrator()
+        run = system.create_run({"title": "Recheck"})
+        system.broker.cash = 0.0
+        system.broker.positions["NVDA"] = {"symbol": "NVDA", "quantity": 20.0, "avg_price": 150.0}
+        result = system.approve(run.run_id)
+        self.assertEqual(result.status, "REJECTED")
+        self.assertTrue(any(v["rule"] == "MAX_SINGLE_ASSET_EXPOSURE" for v in result.risk["violations"]))
+
     def test_ledger_detects_tampering(self):
         ledger = CausalLedger()
         ledger.append("r", "event", "test", {"value": 1})

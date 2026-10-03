@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from threading import RLock
 import re
+import hashlib
+import json
 from .agents import AgentCouncil, CapitalParliament
 from .bitget import BitgetCredentials, BitgetDemoClient
 from .config import Settings
@@ -112,18 +114,50 @@ class BitgetDemoBroker:
 
 
 class RiskConstitution:
-    version = "constitution-v1"
-
     def __init__(self, max_order_notional: float = 1500.0, require_human_approval: bool = True,
-                 max_gross_exposure: float = 5000.0, max_single_asset_exposure: float = 2500.0) -> None:
+                 max_gross_exposure: float = 5000.0, max_single_asset_exposure: float = 2500.0,
+                 max_sector_exposure: float = 3500.0, max_daily_loss: float = 500.0,
+                 max_drawdown_pct: float = 0.10, max_spread_bps: float = 40.0,
+                 max_slippage_bps: float = 30.0, max_data_age_seconds: int = 120,
+                 min_confidence: float = 0.55, max_leverage: float = 1.0,
+                 allowed_venues: set[str] | None = None, strict_data: bool = False) -> None:
         self.max_order_notional = max_order_notional
         self.require_human_approval = require_human_approval
         self.max_gross_exposure = max_gross_exposure
         self.max_single_asset_exposure = max_single_asset_exposure
+        self.max_sector_exposure = max_sector_exposure
+        self.max_daily_loss = max_daily_loss
+        self.max_drawdown_pct = max_drawdown_pct
+        self.max_spread_bps = max_spread_bps
+        self.max_slippage_bps = max_slippage_bps
+        self.max_data_age_seconds = max_data_age_seconds
+        self.min_confidence = min_confidence
+        self.max_leverage = max_leverage
+        self.allowed_venues = allowed_venues or {"mock-paper", "bitget-demo"}
+        self.strict_data = strict_data
+        material = json.dumps({key: value for key, value in self.__dict__.items() if key != "allowed_venues"} |
+                              {"allowed_venues": sorted(self.allowed_venues)}, sort_keys=True)
+        self.version = f"sha256:{hashlib.sha256(material.encode()).hexdigest()}"
 
     def evaluate(self, proposal: dict, portfolio: dict, event: dict) -> dict:
         violations = []
         orders = proposal.get("proposed_orders", [])
+        confidence = float(proposal.get("confidence", 0))
+        if confidence < self.min_confidence:
+            violations.append({"rule": "MIN_DECISION_CONFIDENCE", "observed": confidence,
+                               "limit": self.min_confidence, "severity": "hard"})
+        venue = str(portfolio.get("mode", "mock-paper"))
+        if venue not in self.allowed_venues:
+            violations.append({"rule": "VENUE_NOT_ALLOWED", "observed": venue,
+                               "limit": sorted(self.allowed_venues), "severity": "hard"})
+        daily_pnl = float(portfolio.get("daily_pnl", 0))
+        if daily_pnl < -self.max_daily_loss:
+            violations.append({"rule": "MAX_DAILY_LOSS", "observed": daily_pnl,
+                               "limit": -self.max_daily_loss, "severity": "hard"})
+        drawdown = float(portfolio.get("drawdown_pct", 0))
+        if drawdown > self.max_drawdown_pct:
+            violations.append({"rule": "MAX_DRAWDOWN", "observed": drawdown,
+                               "limit": self.max_drawdown_pct, "severity": "hard"})
         if not orders:
             violations.append({"rule": "NO_ORDER", "observed": 0, "limit": 1, "severity": "hard"})
         for item in orders:
@@ -134,13 +168,43 @@ class RiskConstitution:
             if symbol not in {"NVDA", "QQQ", "TSLA", "AAPL"} and not re.fullmatch(r"r[A-Z]{1,10}USDT", symbol):
                 violations.append({"rule": "ASSET_NOT_ALLOWED", "observed": symbol, "limit": "approved symbols or r<US_TICKER>USDT", "severity": "hard"})
             current = next((p for p in portfolio.get("positions", []) if p["symbol"] == item["symbol"]), None)
-            current_exposure = abs(current["quantity"] * current["avg_price"]) if current else 0.0
-            if current_exposure + notional > self.max_single_asset_exposure:
-                violations.append({"rule": "MAX_SINGLE_ASSET_EXPOSURE", "observed": round(current_exposure + notional, 2), "limit": self.max_single_asset_exposure, "severity": "hard"})
+            current_quantity = float(current["quantity"]) if current else 0.0
+            side = str(item.get("side", "BUY")).upper()
+            projected_quantity = current_quantity + (float(item["quantity"]) if side == "BUY" else -float(item["quantity"]))
+            projected_exposure = abs(projected_quantity * float(item["reference_price"]))
+            if projected_exposure > self.max_single_asset_exposure:
+                violations.append({"rule": "MAX_SINGLE_ASSET_EXPOSURE", "observed": round(projected_exposure, 2), "limit": self.max_single_asset_exposure, "severity": "hard"})
+            quality = (event.get("market_quality") or {}).get(symbol)
+            if quality is None and self.strict_data:
+                violations.append({"rule": "MARKET_DATA_REQUIRED", "observed": "missing",
+                                   "limit": symbol, "severity": "hard"})
+            quality = quality or {}
+            for rule, field, limit in (("MAX_SPREAD", "spread_bps", self.max_spread_bps),
+                                       ("MAX_SLIPPAGE", "expected_slippage_bps", self.max_slippage_bps),
+                                       ("MAX_DATA_AGE", "age_seconds", self.max_data_age_seconds)):
+                observed = float(quality.get(field, 0))
+                if observed > limit:
+                    violations.append({"rule": rule, "observed": observed, "limit": limit, "severity": "hard"})
         gross = sum(abs(p["quantity"] * p["avg_price"]) for p in portfolio.get("positions", []))
         proposed = sum(abs(x["quantity"] * x["reference_price"]) for x in orders)
         if gross + proposed > self.max_gross_exposure:
             violations.append({"rule": "MAX_GROSS_EXPOSURE", "observed": round(gross + proposed, 2), "limit": self.max_gross_exposure, "severity": "hard"})
+        equity = float(portfolio.get("equity", float(portfolio.get("cash", 0)) + gross))
+        leverage = (gross + proposed) / equity if equity > 0 else float("inf")
+        if equity > 0 and leverage > self.max_leverage:
+            violations.append({"rule": "MAX_LEVERAGE", "observed": round(leverage, 4),
+                               "limit": self.max_leverage, "severity": "hard"})
+        sectors: dict[str, float] = {}
+        for position in portfolio.get("positions", []):
+            sector = position.get("sector", "Unknown")
+            sectors[sector] = sectors.get(sector, 0) + abs(float(position["quantity"]) * float(position["avg_price"]))
+        for item in orders:
+            sector = item.get("sector", "Unknown")
+            sectors[sector] = sectors.get(sector, 0) + abs(float(item["quantity"]) * float(item["reference_price"]))
+        for sector, exposure in sectors.items():
+            if exposure > self.max_sector_exposure:
+                violations.append({"rule": "MAX_SECTOR_EXPOSURE", "observed": round(exposure, 2),
+                                   "limit": self.max_sector_exposure, "sector": sector, "severity": "hard"})
         if float(event.get("severity", 0.5)) > 0.95:
             violations.append({"rule": "EXTREME_EVENT_REQUIRES_APPROVAL", "observed": event.get("severity"), "limit": 0.95, "severity": "soft"})
         hard = any(x["severity"] == "hard" for x in violations)
@@ -165,7 +229,12 @@ class CapitalOrchestrator:
         else:
             self.broker = MockPaperBroker(self.store)
         self.risk = RiskConstitution(self.settings.max_order_notional, self.settings.require_human_approval,
-                                     self.settings.max_gross_exposure, self.settings.max_single_asset_exposure)
+                                     self.settings.max_gross_exposure, self.settings.max_single_asset_exposure,
+                                     self.settings.max_sector_exposure, self.settings.max_daily_loss,
+                                     self.settings.max_drawdown_pct, self.settings.max_spread_bps,
+                                     self.settings.max_slippage_bps, self.settings.max_data_age_seconds,
+                                     self.settings.min_decision_confidence, self.settings.max_leverage,
+                                     strict_data=self.settings.environment == "production")
         provider = QwenProvider(self.settings.dashscope_api_key, self.settings.qwen_base_url, self.settings.qwen_model) if self.settings.llm_provider == "qwen" else DeterministicProvider()
         self.agents = AgentCouncil(LLMRouter(provider, self.store.record_model_call))
         self.parliament = CapitalParliament()
@@ -249,6 +318,14 @@ class CapitalOrchestrator:
         if self.kill_switch_enabled:
             raise ExecutionFrozen("Execution is frozen by the global kill switch")
         if run.status not in {"AWAITING_APPROVAL", "APPROVED"}:
+            return run
+        recheck = self.risk.evaluate(run.parliament, self.broker.snapshot(), run.event)
+        run.risk = recheck
+        self.ledger.append(run_id, "risk_recheck", "risk_constitution", recheck)
+        if recheck["decision"] == "deny":
+            run.transition("REJECTED")
+            self.store.save_run(run)
+            METRICS.inc("risk_rejections_total", labels={"phase": "pre_execution"})
             return run
         run.transition("EXECUTING")
         self.store.save_run(run)
