@@ -110,6 +110,13 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         self._begin()
         path = urlparse(self.path).path
+        if path == "/api/cron/worker":
+            if not SETTINGS.cron_secret or self.headers.get("Authorization") != f"Bearer {SETTINGS.cron_secret}":
+                return self._send({"error": "Unauthorized"}, 401)
+            from .worker import Worker
+            worker = Worker(ORCH, worker_id="vercel-cron")
+            processed = worker.process_one()
+            return self._send({"ok": True, "processed": processed})
         if path in STATIC_ROUTES:
             filename, content_type = STATIC_ROUTES[path]
             return self._send((WEB_ROOT / filename).read_bytes(), content_type=content_type)

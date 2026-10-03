@@ -145,10 +145,22 @@ The repository includes `render.yaml` for the production control plane:
    `render.yaml`. Set Qwen and Gemini keys only in Render's encrypted secrets.
 5. Keep `TESSERA_BROKER_MODE=mock-paper` until Bitget Demo smoke tests pass.
 
-Render is the primary deployment because it serves the existing console and API
-same-origin. `vercel.json` is an optional static-console deployment and proxies
-`/api/*` to `https://tessera-api.onrender.com`; update that destination if the
-Render service name or URL changes.
+### Vercel + Supabase serverless
+
+The repository also supports a no-worker-host deployment on Vercel. Vercel
+runs `api/index.py` as the HTTP Function and invokes `/api/cron/worker` every
+minute. The existing PostgreSQL jobs table is the durable queue, so no Redis
+service is required. Supabase Storage is S3-compatible and can be used for
+replay artifacts.
+
+Set `TESSERA_ENV=serverless`, keep authentication enabled, provide the
+Supabase PostgreSQL URL, Supabase Storage S3 credentials, `CRON_SECRET`, and
+the model credentials. The broker remains `mock-paper` until Bitget Demo
+smoke tests pass. Vercel Function limits mean each cron invocation processes a
+bounded job; the job lease/retry state remains in PostgreSQL.
+
+Render remains supported for teams that want an always-on worker, but it is no
+longer required for the hackathon deployment.
 
 Model policy: Qwen is the primary institutional reasoning provider; Gemini is a
 fallback for provider failure or malformed structured output. Every attempt is

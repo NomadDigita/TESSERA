@@ -59,6 +59,7 @@ class Settings:
     api_rate_limit: int = 120
     admin_username: str = "admin"
     admin_password: str = ""
+    cron_secret: str = ""
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -108,6 +109,7 @@ class Settings:
             api_rate_limit=int(os.getenv("TESSERA_API_RATE_LIMIT", "120")),
             admin_username=os.getenv("TESSERA_ADMIN_USERNAME", "admin"),
             admin_password=os.getenv("TESSERA_ADMIN_PASSWORD", ""),
+            cron_secret=os.getenv("CRON_SECRET", ""),
         )
         settings.validate()
         return settings
@@ -145,15 +147,17 @@ class Settings:
             raise ValueError("GEMINI_API_KEY is required when the LLM fallback is gemini")
         if self.environment == "production" and not self.auth_enabled:
             raise ValueError("Authentication must be enabled in production")
-        if self.environment == "production" and not self.database_url:
-            raise ValueError("DATABASE_URL is required in production")
+        if self.environment in {"production", "serverless"} and not self.database_url:
+            raise ValueError("DATABASE_URL is required in hosted environments")
         if self.environment == "production" and not self.redis_url:
             raise ValueError("REDIS_URL is required in production")
-        if self.environment == "production" and not all((self.object_storage_endpoint,
+        if self.environment in {"production", "serverless"} and not all((self.object_storage_endpoint,
                                                            self.object_storage_bucket,
                                                            self.object_storage_access_key,
                                                            self.object_storage_secret_key)):
             raise ValueError("S3-compatible object storage configuration is required in production")
+        if self.environment == "serverless" and not self.cron_secret:
+            raise ValueError("CRON_SECRET is required in serverless mode")
         if self.database_url and not self.database_url.startswith(("postgresql://", "postgres://")):
             raise ValueError("DATABASE_URL must be a PostgreSQL URL")
         if self.redis_url and not self.redis_url.startswith(("redis://", "rediss://")):

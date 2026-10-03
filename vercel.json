@@ -1,8 +1,14 @@
 {
   "version": 2,
+  "functions": {
+    "api/index.py": { "runtime": "python3.12", "maxDuration": 300 }
+  },
   "rewrites": [
-    { "source": "/api/:path*", "destination": "https://tessera-api.onrender.com/api/:path*" },
+    { "source": "/api/:path*", "destination": "/api/index.py" },
     { "source": "/assets/:path*", "destination": "/tessera/web/:path*" },
     { "source": "/", "destination": "/tessera/web/index.html" }
+  ],
+  "crons": [
+    { "path": "/api/cron/worker", "schedule": "* * * * *" }
   ]
 }
