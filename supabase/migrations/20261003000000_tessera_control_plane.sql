@@ -72,6 +72,11 @@ do $$ declare table_name text; begin
     'idempotency_keys','model_calls','market_observations','market_edges','strategy_versions',
     'jobs','replays','asset_embeddings'] loop
     execute format('alter table %I enable row level security', table_name);
-    execute format('revoke all on table %I from anon, authenticated', table_name);
+    if exists (select 1 from pg_roles where rolname = 'anon') then
+      execute format('revoke all on table %I from anon', table_name);
+    end if;
+    if exists (select 1 from pg_roles where rolname = 'authenticated') then
+      execute format('revoke all on table %I from authenticated', table_name);
+    end if;
   end loop;
 end $$;

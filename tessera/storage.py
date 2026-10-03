@@ -524,6 +524,8 @@ class _PostgresConnection:
     @staticmethod
     def _sql(statement: str) -> str:
         statement = statement.replace("?", "%s")
+        if statement.startswith("ALTER TABLE") and "ADD COLUMN" in statement and "IF NOT EXISTS" not in statement:
+            statement = statement.replace("ADD COLUMN", "ADD COLUMN IF NOT EXISTS", 1)
         statement = statement.replace("INSERT OR IGNORE INTO", "INSERT INTO")
         if "INSERT INTO idempotency_keys" in statement and "ON CONFLICT" not in statement:
             statement += " ON CONFLICT(scope,key) DO NOTHING"
