@@ -5,8 +5,8 @@
   },
   "rewrites": [
     { "source": "/api/:path*", "destination": "/api/index.py" },
-    { "source": "/assets/:path*", "destination": "/tessera/web/:path*" },
-    { "source": "/", "destination": "/tessera/web/index.html" }
+    { "source": "/assets/:path*", "destination": "/api/index.py" },
+    { "source": "/", "destination": "/api/index.py" }
   ],
   "crons": [
     { "path": "/api/cron/worker", "schedule": "0 0 * * *" }
