@@ -1,6 +1,7 @@
 import os
 import unittest
 import uuid
+from pathlib import Path
 
 from tessera.config import Settings
 from tessera.events import RedisStreamBus
@@ -13,6 +14,16 @@ from tessera.rate_limit import RedisRateLimiter
 
 @unittest.skipUnless(os.getenv("TESSERA_INTEGRATION_TESTS") == "1", "production services not configured")
 class ProductionServicesTests(unittest.TestCase):
+    def test_supabase_migration_applies_idempotently(self):
+        import psycopg
+        migration = Path(__file__).parents[1] / "supabase" / "migrations" / "20261003000000_tessera_control_plane.sql"
+        with psycopg.connect(os.environ["DATABASE_URL"]) as connection:
+            connection.execute(migration.read_text(encoding="utf-8"))
+            connection.execute(migration.read_text(encoding="utf-8"))
+        store = PostgreSQLStore(os.environ["DATABASE_URL"])
+        self.assertTrue(store.ping())
+        store.close()
+
     def test_postgres_redis_worker_round_trip(self):
         database_url = os.environ["DATABASE_URL"]
         redis_url = os.environ["REDIS_URL"]
