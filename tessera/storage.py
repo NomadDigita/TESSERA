@@ -275,7 +275,7 @@ class SQLiteStore:
         with self._lock, self._db:
             self._db.execute(
                 "INSERT INTO users(username,password_hash,role,active) VALUES(?,?,?,?)",
-                (user["username"], user["password_hash"], user["role"], 1 if user.get("active", True) else 0),
+                (user["username"], user["password_hash"], user["role"], bool(user.get("active", True))),
             )
 
     def get_user(self, username: str) -> dict | None:
