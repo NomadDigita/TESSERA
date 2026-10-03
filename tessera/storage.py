@@ -495,14 +495,14 @@ class SQLiteStore:
     def get_replay(self, replay_id: str) -> dict | None:
         with self._lock:
             row = self._db.execute("SELECT payload FROM replays WHERE replay_id=?", (replay_id,)).fetchone()
-        return json.loads(row["payload"]) if row else None
+        return _decode_json(row["payload"]) if row else None
 
     def list_replays(self, limit: int = 100) -> list[dict]:
         with self._lock:
             rows = self._db.execute(
                 "SELECT payload FROM replays ORDER BY created_at DESC LIMIT ?", (limit,)
             ).fetchall()
-        return [json.loads(row["payload"]) for row in rows]
+        return [_decode_json(row["payload"]) for row in rows]
 
     def ping(self) -> bool:
         try:
