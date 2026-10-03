@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#07110f">
+  <title>TESSERA · Capital Control Plane</title>
+  <link rel="stylesheet" href="/assets/styles.css">
+</head>
+<body>
+  <div class="noise"></div>
+  <header class="topbar">
+    <a class="brand" href="/"><span class="brand-mark">T</span><span>TESSERA</span></a>
+    <div class="system-state"><span id="healthDot" class="status-dot"></span><span id="systemLabel">Connecting</span></div>
+    <div class="top-actions"><span id="modeBadge" class="badge">PAPER</span><button id="logoutButton" class="ghost hidden">Sign out</button></div>
+  </header>
+
+  <main class="shell">
+    <aside class="sidebar">
+      <p class="eyebrow">Capital infrastructure</p>
+      <nav>
+        <button class="nav-item active" data-view="overview">Overview</button>
+        <button class="nav-item" data-view="runs">Decision runs</button>
+        <button class="nav-item" data-view="ledger">Causal ledger</button>
+      </nav>
+      <div class="safety-card">
+        <div class="safety-head"><span>Risk Constitution</span><span id="killState" class="badge safe">ACTIVE</span></div>
+        <p>Deterministic policy remains between every model decision and execution.</p>
+        <button id="killSwitchButton" class="danger-button">Freeze execution</button>
+      </div>
+    </aside>
+
+    <section class="workspace">
+      <div class="hero">
+        <div><p class="eyebrow">Institutional intelligence</p><h1>Capital decisions,<br><em>with evidence.</em></h1></div>
+        <button id="newRunButton" class="primary">+ New decision run</button>
+      </div>
+
+      <div class="metric-grid">
+        <article class="metric-card"><span>Available capital</span><strong id="cashMetric">—</strong><small id="portfolioMode">Loading portfolio</small></article>
+        <article class="metric-card"><span>Decision runs</span><strong id="runsMetric">—</strong><small>Persisted and replayable</small></article>
+        <article class="metric-card"><span>Ledger integrity</span><strong id="ledgerMetric">—</strong><small id="ledgerEntries">Hash chain</small></article>
+        <article class="metric-card"><span>Model calls</span><strong id="callsMetric">—</strong><small>Structured and audited</small></article>
+      </div>
+
+      <div class="content-grid">
+        <section class="panel run-panel">
+          <div class="panel-head"><div><p class="eyebrow">Latest mandate</p><h2 id="runTitle">No decision run selected</h2></div><span id="runStatus" class="status-chip">IDLE</span></div>
+          <p id="runSubtitle" class="muted">Create a run to activate the council.</p>
+          <div id="runActions" class="action-row hidden">
+            <button id="approveButton" class="primary">Approve paper order</button>
+            <button id="rejectButton" class="ghost">Reject</button>
+            <button id="reconcileButton" class="ghost hidden">Reconcile exchange</button>
+            <button id="replayButton" class="ghost">Replay</button>
+          </div>
+          <div class="decision-grid">
+            <div><span class="label">Parliament confidence</span><div class="confidence"><div id="confidenceBar"></div></div><strong id="confidenceValue">—</strong></div>
+            <div><span class="label">Risk decision</span><strong id="riskDecision">—</strong></div>
+          </div>
+          <div id="agents" class="agent-list empty-state">Agent outputs will appear here.</div>
+        </section>
+
+        <section class="panel side-panel">
+          <div class="panel-head"><div><p class="eyebrow">Portfolio</p><h2>Current exposure</h2></div></div>
+          <div id="positions" class="position-list empty-state">No open positions.</div>
+          <div class="divider"></div>
+          <div class="panel-head compact"><div><p class="eyebrow">Audit stream</p><h2>Recent evidence</h2></div></div>
+          <div id="ledgerFeed" class="ledger-feed empty-state">No ledger entries.</div>
+        </section>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="runDialog">
+    <form id="runForm" method="dialog">
+      <div class="dialog-head"><div><p class="eyebrow">New mandate</p><h2>Convene the Parliament</h2></div><button type="button" class="icon-button" data-close>×</button></div>
+      <label>Market event<textarea name="title" required maxlength="400" placeholder="Describe the earnings, policy, macro, or cross-market event…"></textarea></label>
+      <div class="form-row"><label>Severity<input name="severity" type="range" min="0" max="1" value="0.72" step="0.01"><output id="severityOutput">0.72</output></label><label>Symbols<input name="symbols" value="NVDA, QQQ" placeholder="NVDA, QQQ"></label></div>
+      <div class="dialog-actions"><button type="button" class="ghost" data-close>Cancel</button><button class="primary" type="submit">Start decision run</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="loginDialog" class="login-dialog">
+    <form id="loginForm">
+      <div class="login-mark">T</div><p class="eyebrow">Secure capital console</p><h2>Enter TESSERA</h2>
+      <label>Username<input name="username" autocomplete="username" required></label>
+      <label>Password<input name="password" type="password" autocomplete="current-password" required></label>
+      <p id="loginError" class="error-text"></p><button class="primary wide" type="submit">Authenticate</button>
+    </form>
+  </dialog>
+  <div id="toast" class="toast"></div>
+  <script src="/assets/app.js" defer></script>
+</body>
+</html>
