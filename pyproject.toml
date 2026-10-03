@@ -9,6 +9,11 @@ dependencies = [
     "boto3>=1.35,<2",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=8,<9",
+]
+
 [project.scripts]
 tessera = "tessera.server:serve"
 tessera-worker = "tessera.worker:main"

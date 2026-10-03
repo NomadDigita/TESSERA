@@ -25,7 +25,8 @@ Real-money execution is intentionally disabled.
 
 ## Run locally
 
-Python 3.10+ is required. No third-party runtime dependency is needed.
+Python 3.10+ is required. Install the package and its runtime dependencies with
+`python -m pip install -e .` (or `python -m pip install -e \".[dev]\"` for tests).
 
 ```powershell
 Copy-Item .env.example .env
