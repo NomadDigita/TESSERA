@@ -129,6 +129,30 @@ TESSERA_ADMIN_PASSWORD=<at-least-12-characters>
 persistent Redis and S3-compatible object storage services. Replace all example
 credentials before deployment.
 
+## Recommended hosted deployment
+
+The repository includes `render.yaml` for the production control plane:
+
+1. Create or select the Supabase project and copy its direct or pooler
+   PostgreSQL connection string into Render as `DATABASE_URL` with TLS enabled
+   (`sslmode=require`). Do not use a Supabase publishable or service key as the
+   database connection string.
+2. Create an Upstash Redis database and set `REDIS_URL` to its `rediss://` URL.
+3. Configure an S3-compatible bucket (Cloudflare R2 is a good low-ops choice)
+   using the four `OBJECT_STORAGE_*` secrets.
+4. Connect the repository to Render and deploy the API and worker services from
+   `render.yaml`. Set Qwen and Gemini keys only in Render's encrypted secrets.
+5. Keep `TESSERA_BROKER_MODE=mock-paper` until Bitget Demo smoke tests pass.
+
+Render is the primary deployment because it serves the existing console and API
+same-origin. `vercel.json` is an optional static-console deployment and proxies
+`/api/*` to `https://tessera-api.onrender.com`; update that destination if the
+Render service name or URL changes.
+
+Model policy: Qwen is the primary institutional reasoning provider; Gemini is a
+fallback for provider failure or malformed structured output. Every attempt is
+audited, and neither provider can bypass deterministic risk checks.
+
 Replay evidence is persisted as canonical JSON with a SHA-256 integrity reference:
 
 - `GET /api/replays` lists replay records.

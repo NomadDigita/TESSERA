@@ -41,9 +41,13 @@ class Settings:
     min_decision_confidence: float = 0.55
     max_leverage: float = 1.0
     llm_provider: str = "deterministic"
+    llm_fallback_provider: str = "deterministic"
     qwen_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     qwen_model: str = "qwen-plus"
     dashscope_api_key: str = ""
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-2.5-flash"
+    gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta"
     bitget_api_key: str = ""
     bitget_api_secret: str = ""
     bitget_api_passphrase: str = ""
@@ -86,9 +90,13 @@ class Settings:
             min_decision_confidence=float(os.getenv("TESSERA_MIN_DECISION_CONFIDENCE", "0.55")),
             max_leverage=float(os.getenv("TESSERA_MAX_LEVERAGE", "1.0")),
             llm_provider=os.getenv("TESSERA_LLM_PROVIDER", "deterministic"),
+            llm_fallback_provider=os.getenv("TESSERA_LLM_FALLBACK_PROVIDER", "deterministic"),
             qwen_base_url=os.getenv("QWEN_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
             qwen_model=os.getenv("QWEN_MODEL", "qwen-plus"),
             dashscope_api_key=os.getenv("DASHSCOPE_API_KEY", ""),
+            gemini_api_key=os.getenv("GEMINI_API_KEY", ""),
+            gemini_model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
+            gemini_base_url=os.getenv("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta"),
             bitget_api_key=os.getenv("BITGET_API_KEY", ""),
             bitget_api_secret=os.getenv("BITGET_API_SECRET", ""),
             bitget_api_passphrase=os.getenv("BITGET_API_PASSPHRASE", ""),
@@ -124,10 +132,17 @@ class Settings:
             raise ValueError("BITGET_BASE_URL must use HTTPS")
         if self.live_trading_enabled:
             raise ValueError("Live trading is intentionally disabled")
-        if self.llm_provider not in {"deterministic", "qwen"}:
-            raise ValueError("TESSERA_LLM_PROVIDER must be deterministic or qwen")
+        providers = {"deterministic", "qwen", "gemini"}
+        if self.llm_provider not in providers or self.llm_fallback_provider not in providers:
+            raise ValueError("LLM providers must be deterministic, qwen, or gemini")
         if self.llm_provider == "qwen" and not self.dashscope_api_key:
             raise ValueError("DASHSCOPE_API_KEY is required when TESSERA_LLM_PROVIDER=qwen")
+        if self.llm_provider == "gemini" and not self.gemini_api_key:
+            raise ValueError("GEMINI_API_KEY is required when TESSERA_LLM_PROVIDER=gemini")
+        if self.llm_fallback_provider == "qwen" and not self.dashscope_api_key:
+            raise ValueError("DASHSCOPE_API_KEY is required when the LLM fallback is qwen")
+        if self.llm_fallback_provider == "gemini" and not self.gemini_api_key:
+            raise ValueError("GEMINI_API_KEY is required when the LLM fallback is gemini")
         if self.environment == "production" and not self.auth_enabled:
             raise ValueError("Authentication must be enabled in production")
         if self.environment == "production" and not self.database_url:

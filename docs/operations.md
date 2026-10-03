@@ -12,6 +12,19 @@
 
 Production startup fails closed when authentication, PostgreSQL, or Redis is absent.
 
+## Render + Supabase release checklist
+
+1. Apply `supabase/migrations/20261003000000_tessera_control_plane.sql` to the
+   selected Supabase project through the Supabase migration workflow.
+2. Set Render `DATABASE_URL` to the Supabase direct/pooler URL with TLS, and
+   verify `/api/ready` reports database, Redis, artifact store, and ledger checks.
+3. Confirm both API and worker use the same Supabase, Upstash, and object-storage
+   credentials. Do not put any of these values in Vercel or browser variables.
+4. Run a seeded paper decision, approve it, reconcile it, download its replay
+   bundle, and verify the bundle SHA-256 reference.
+5. Only after the Bitget demo adapter smoke test passes should the demo account
+   credentials be configured; live trading remains disabled by code.
+
 ## Runtime modes
 
 - `mock-paper`: deterministic local and staging execution. No external orders.

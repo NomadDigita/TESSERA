@@ -1,0 +1,8 @@
+{
+  "version": 2,
+  "rewrites": [
+    { "source": "/api/:path*", "destination": "https://tessera-api.onrender.com/api/:path*" },
+    { "source": "/assets/:path*", "destination": "/tessera/web/:path*" },
+    { "source": "/", "destination": "/tessera/web/index.html" }
+  ]
+}

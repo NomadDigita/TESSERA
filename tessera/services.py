@@ -8,7 +8,7 @@ from .agents import AgentCouncil, CapitalParliament
 from .bitget import BitgetCredentials, BitgetDemoClient
 from .config import Settings
 from .domain import CausalLedger, ExecutionFrozen, OrderIntent, Run, now, uid
-from .llm import DeterministicProvider, LLMRouter, QwenProvider
+from .llm import DeterministicProvider, GeminiProvider, LLMRouter, QwenProvider
 from .intelligence import MarketGraph, MarketTwin, StrategyGenomeRegistry
 from .events import NullEventBus
 from .artifacts import create_artifact_store
@@ -235,8 +235,21 @@ class CapitalOrchestrator:
                                      self.settings.max_slippage_bps, self.settings.max_data_age_seconds,
                                      self.settings.min_decision_confidence, self.settings.max_leverage,
                                      strict_data=self.settings.environment == "production")
-        provider = QwenProvider(self.settings.dashscope_api_key, self.settings.qwen_base_url, self.settings.qwen_model) if self.settings.llm_provider == "qwen" else DeterministicProvider()
-        self.agents = AgentCouncil(LLMRouter(provider, self.store.record_model_call))
+        providers = []
+        for provider_name in (self.settings.llm_provider, self.settings.llm_fallback_provider):
+            if provider_name == "qwen":
+                providers.append(QwenProvider(self.settings.dashscope_api_key, self.settings.qwen_base_url, self.settings.qwen_model))
+            elif provider_name == "gemini":
+                providers.append(GeminiProvider(self.settings.gemini_api_key, self.settings.gemini_base_url, self.settings.gemini_model))
+            else:
+                providers.append(DeterministicProvider())
+        unique_providers = []
+        seen = set()
+        for provider in providers:
+            if provider.name not in seen:
+                unique_providers.append(provider)
+                seen.add(provider.name)
+        self.agents = AgentCouncil(LLMRouter(unique_providers, self.store.record_model_call))
         self.parliament = CapitalParliament()
         self.market_graph = MarketGraph(self.store)
         self.market_twin = MarketTwin(self.store, self.market_graph)

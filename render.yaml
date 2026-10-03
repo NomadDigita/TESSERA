@@ -1,0 +1,70 @@
+services:
+  - type: web
+    name: tessera-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/ready
+    envVars: &tessera_env
+      - key: TESSERA_ENV
+        value: production
+      - key: TESSERA_HOST
+        value: 0.0.0.0
+      - key: TESSERA_AUTH_ENABLED
+        value: "true"
+      - key: TESSERA_BROKER_MODE
+        value: mock-paper
+      - key: TESSERA_LIVE_TRADING_ENABLED
+        value: "false"
+      - key: TESSERA_REQUIRE_HUMAN_APPROVAL
+        value: "true"
+      - key: TESSERA_LLM_PROVIDER
+        value: qwen
+      - key: TESSERA_LLM_FALLBACK_PROVIDER
+        value: gemini
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: OBJECT_STORAGE_ENDPOINT
+        sync: false
+      - key: OBJECT_STORAGE_BUCKET
+        sync: false
+      - key: OBJECT_STORAGE_ACCESS_KEY
+        sync: false
+      - key: OBJECT_STORAGE_SECRET_KEY
+        sync: false
+      - key: OBJECT_STORAGE_REGION
+        value: us-east-1
+      - key: TESSERA_SESSION_SECRET
+        sync: false
+      - key: TESSERA_ADMIN_PASSWORD
+        sync: false
+      - key: DASHSCOPE_API_KEY
+        sync: false
+      - key: QWEN_BASE_URL
+        value: https://dashscope.aliyuncs.com/compatible-mode/v1
+      - key: QWEN_MODEL
+        value: qwen-plus
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_BASE_URL
+        value: https://generativelanguage.googleapis.com/v1beta
+      - key: GEMINI_MODEL
+        value: gemini-2.5-flash
+      - key: BITGET_API_KEY
+        sync: false
+      - key: BITGET_API_SECRET
+        sync: false
+      - key: BITGET_API_PASSPHRASE
+        sync: false
+      - key: BITGET_BASE_URL
+        value: https://api.bitget.com
+
+  - type: worker
+    name: tessera-worker
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    dockerCommand: python -m tessera.worker
+    envVars: *tessera_env
